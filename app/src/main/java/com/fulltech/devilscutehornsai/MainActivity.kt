@@ -1,14 +1,18 @@
 package com.fulltech.devilscutehornsai
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -16,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 private val Background = Color(0xFF090909)
 private val SurfaceDark = Color(0xFF171717)
@@ -23,22 +28,11 @@ private val Crimson = Color(0xFFDC143C)
 private val Muted = Color(0xFF999999)
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setContent {
-            DevilTheme {
-                HomeScreen(
-                    onCapture = {
-                        Toast.makeText(
-                            this,
-                            "Camera module is our next milestone.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                )
-            }
-        }
+        setContent { DevilTheme { DchApp() } }
     }
 }
 
@@ -58,7 +52,10 @@ fun DevilTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun HomeScreen(onCapture: () -> Unit) {
+fun HomeScreen(
+    photoReady: Boolean,
+    onCapture: () -> Unit
+) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Background
@@ -71,10 +68,7 @@ fun HomeScreen(onCapture: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.height(65.dp))
 
-            Text(
-                text = "😈",
-                fontSize = 64.sp
-            )
+            Text(text = "😈", fontSize = 64.sp)
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -111,11 +105,9 @@ fun HomeScreen(onCapture: () -> Unit) {
                 ),
                 shape = RoundedCornerShape(20.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(22.dp)
-                ) {
+                Column(modifier = Modifier.padding(22.dp)) {
                     Text(
-                        text = "READY WHEN YOU ARE",
+                        text = if (photoReady) "PHOTO READY" else "READY WHEN YOU ARE",
                         color = Crimson,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -134,8 +126,11 @@ fun HomeScreen(onCapture: () -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Capture a question sheet, understand its contents, " +
-                                "and listen to carefully generated explanations.",
+                        text = if (photoReady) {
+                            "Your question sheet has been captured. Text recognition is the next step."
+                        } else {
+                            "Capture a question sheet, understand its contents, and listen to carefully generated explanations."
+                        },
                         color = Muted,
                         fontSize = 13.sp,
                         lineHeight = 21.sp
