@@ -59,6 +59,7 @@ class DchProcessingWorker(
     companion object {
         const val KEY_SESSION_ID = "session_id"
         const val KEY_ENQUEUED_AT = "enqueued_at"
+        private const val MAX_PAGE_ATTEMPTS = 3
 
         private const val ANSWER_IN_FLIGHT = "in_flight"
         private const val ANSWER_UNCERTAIN = "uncertain"
@@ -141,6 +142,27 @@ class DchProcessingWorker(
                         )
                     )
                     continue
+                }
+
+                if ((previous?.attempts ?: 0) >= MAX_PAGE_ATTEMPTS) {
+                    val lastError = previous?.errorMessage
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "The maximum number of attempts was reached."
+
+                    withContext(Dispatchers.IO) {
+                        repository.updatePageProcessing(
+                            id = sessionId,
+                            pageIndex = pageNumber,
+                            status = "failed",
+                            errorCategory = previous?.errorCategory ?: "reconstruction",
+                            errorMessage = lastError,
+                            attempts = previous?.attempts ?: MAX_PAGE_ATTEMPTS
+                        )
+                    }
+
+                    return failure(
+                        "Page $pageNumber failed after $MAX_PAGE_ATTEMPTS attempts: $lastError"
+                    )
                 }
 
                 val attempts = (previous?.attempts ?: 0) + 1
@@ -227,27 +249,53 @@ class DchProcessingWorker(
                         )
                     }
 
-                    if (error.retryable) {
+                    val message = error.message ?: "Reconstruction failed."
+
+                    if (error.retryable && attempts < MAX_PAGE_ATTEMPTS) {
+                        setProgress(
+                            workDataOf(
+                                "progress" to (pageNumber - 1),
+                                "page_count" to totalPages,
+                                "phase" to "Temporary problem. Retrying page $pageNumber (attempt $attempts of $MAX_PAGE_ATTEMPTS)..."
+                            )
+                        )
                         return Result.retry()
                     }
 
                     return failure(
-                        "Page $pageNumber: ${error.message ?: "Reconstruction failed."}"
+                        "Page $pageNumber failed after $attempts attempt(s): $message"
                     )
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
+                    val message = error.localizedMessage
+                        ?: "An unexpected error occurred during reconstruction."
+
                     withContext(Dispatchers.IO) {
                         repository.updatePageProcessing(
                             id = sessionId,
                             pageIndex = pageNumber,
                             status = "failed",
                             errorCategory = "network",
-                            errorMessage = error.localizedMessage.orEmpty(),
+                            errorMessage = message,
                             attempts = attempts
                         )
                     }
-                    return Result.retry()
+
+                    if (attempts < MAX_PAGE_ATTEMPTS) {
+                        setProgress(
+                            workDataOf(
+                                "progress" to (pageNumber - 1),
+                                "page_count" to totalPages,
+                                "phase" to "Temporary problem. Retrying page $pageNumber (attempt $attempts of $MAX_PAGE_ATTEMPTS)..."
+                            )
+                        )
+                        return Result.retry()
+                    }
+
+                    return failure(
+                        "Page $pageNumber failed after $attempts attempts: $message"
+                    )
                 }
             }
 
@@ -256,7 +304,21 @@ class DchProcessingWorker(
             } ?: return failure("Unable to reload the scan session.")
 
             if (session.successfulPageCount != session.pageCount) {
-                return Result.retry()
+                val incompletePage = session.pageResults.firstOrNull {
+                    it.status != "succeeded"
+                }
+                val pageNumber = incompletePage?.index
+                val detail = incompletePage?.errorMessage
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "The page result was not saved successfully."
+
+                return failure(
+                    if (pageNumber != null) {
+                        "Page $pageNumber is incomplete: $detail"
+                    } else {
+                        "Document reconstruction is incomplete. $detail"
+                    }
+                )
             }
 
             val completeText = session.reconstructedText.trim()

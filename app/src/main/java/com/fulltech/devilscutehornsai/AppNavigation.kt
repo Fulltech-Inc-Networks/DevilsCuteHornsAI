@@ -781,16 +781,17 @@ private fun OcrReviewScreen(
 
                 progress = info.progress.getInt("progress", progress)
                 pageCount = info.progress.getInt("page_count", pageCount)
-                phase = info.progress.getString("phase")
-                    ?: when (info.state) {
-                        androidx.work.WorkInfo.State.ENQUEUED ->
-                            "Waiting for a network connection..."
-                        androidx.work.WorkInfo.State.BLOCKED ->
-                            "Waiting for another task..."
-                        androidx.work.WorkInfo.State.RUNNING ->
-                            "Processing your document..."
-                        else -> phase
-                    }
+                phase = when (info.state) {
+                    androidx.work.WorkInfo.State.ENQUEUED ->
+                        "Waiting for a network connection or retry delay..."
+                    androidx.work.WorkInfo.State.BLOCKED ->
+                        "Waiting for another background task..."
+                    androidx.work.WorkInfo.State.RUNNING ->
+                        info.progress.getString("phase")
+                            ?: "Processing your document..."
+                    else ->
+                        info.progress.getString("phase") ?: phase
+                }
 
                 when (info.state) {
                     androidx.work.WorkInfo.State.SUCCEEDED -> {
