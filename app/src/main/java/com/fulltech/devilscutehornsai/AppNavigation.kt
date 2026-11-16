@@ -6,6 +6,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -88,6 +93,12 @@ fun DchApp() {
             )
         }
 
+        "settings" -> {
+            GatewaySettingsScreen(
+                onBack = { route = "home" }
+            )
+        }
+
         "history" -> {
             SessionHistoryScreen(
                 repository = repository,
@@ -129,7 +140,8 @@ fun DchApp() {
                         )
                     }
                 },
-                onHistory = { route = "history" }
+                onHistory = { route = "history" },
+                onSettings = { route = "settings" }
             )
         }
     }
@@ -138,7 +150,8 @@ fun DchApp() {
 @Composable
 private fun DashboardScreen(
     onCapture: () -> Unit,
-    onHistory: () -> Unit
+    onHistory: () -> Unit,
+    onSettings: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -246,6 +259,17 @@ private fun DashboardScreen(
                     ) {
                         Text("SCAN HISTORY", color = Color.White)
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = onSettings,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                    ) {
+                        Text("AI GATEWAY SETTINGS", color = Color.White)
+                    }
                 }
             }
 
@@ -256,6 +280,224 @@ private fun DashboardScreen(
                 color = Color.DarkGray,
                 fontSize = 10.sp,
                 letterSpacing = 2.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun GatewaySettingsScreen(
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val tokenStore = remember {
+        GatewayTokenStore(context.applicationContext)
+    }
+
+    var tokenInput by remember { mutableStateOf("") }
+    var tokenSaved by remember {
+        mutableStateOf(runCatching { tokenStore.read() != null }.getOrDefault(false))
+    }
+    var checking by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var statusSuccess by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = AppBlack
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp)
+        ) {
+            TextButton(onClick = onBack) {
+                Text("← BACK", color = AppRed)
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                "AI GATEWAY",
+                color = AppRed,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 3.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                "Connection Settings",
+                color = Color.White,
+                fontSize = 25.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                "Connect DCH AI to its secure Cloudflare gateway. " +
+                    "Your gateway token is encrypted on this device using Android Keystore.",
+                color = AppMuted,
+                fontSize = 14.sp,
+                lineHeight = 22.sp
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = AppSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        "GATEWAY TOKEN",
+                        color = AppRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = tokenInput,
+                        onValueChange = {
+                            tokenInput = it
+                            statusMessage = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Enter your gateway token") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        if (tokenSaved) {
+                            "A gateway token is saved on this device."
+                        } else {
+                            "No gateway token has been saved yet."
+                        },
+                        color = if (tokenSaved) Color(0xFF72D69A) else AppMuted,
+                        fontSize = 12.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Button(
+                        onClick = {
+                            try {
+                                tokenStore.save(tokenInput)
+                                tokenInput = ""
+                                tokenSaved = true
+                                statusMessage = "Token saved securely on this device."
+                                statusSuccess = true
+                            } catch (error: Exception) {
+                                statusMessage = error.localizedMessage
+                                    ?: "Unable to save the token."
+                                statusSuccess = false
+                            }
+                        },
+                        enabled = tokenInput.isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppRed
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("SAVE TOKEN", fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            checking = true
+                            statusMessage = null
+
+                            scope.launch {
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        GatewayClient.checkHealth()
+                                    }
+
+                                    statusMessage =
+                                        "${result.text} Model: ${result.model}"
+                                    statusSuccess = true
+                                } catch (error: Exception) {
+                                    statusMessage = error.localizedMessage
+                                        ?: "Gateway connection failed."
+                                    statusSuccess = false
+                                } finally {
+                                    checking = false
+                                }
+                            }
+                        },
+                        enabled = !checking,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        if (checking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = AppRed,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                        }
+                        Text(
+                            if (checking) "CHECKING CONNECTION..." else "TEST GATEWAY CONNECTION",
+                            color = Color.White
+                        )
+                    }
+
+                    if (statusMessage != null) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            statusMessage!!,
+                            color = if (statusSuccess) {
+                                Color(0xFF72D69A)
+                            } else {
+                                AppRed
+                            },
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                "SECURITY NOTE",
+                color = AppRed,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                "The token is encrypted at rest, but a shared token embedded in an " +
+                    "installed app is not completely protected against extraction. " +
+                    "Keep it private and rotate it if it is exposed.",
+                color = AppMuted,
+                fontSize = 12.sp,
+                lineHeight = 19.sp
             )
         }
     }

@@ -10,7 +10,11 @@ data class ScanSession(
     val id: String,
     val createdAt: Long,
     val pagePaths: List<String>,
-    val extractedText: String
+    val extractedText: String,
+    val reconstructedText: String = "",
+    val approvedText: String = "",
+    val answerText: String = "",
+    val model: String = ""
 ) {
     val pageCount: Int
         get() = pagePaths.size
@@ -25,7 +29,11 @@ class SessionRepository(context: Context) {
     @Synchronized
     fun saveSession(
         pages: List<File>,
-        extractedText: String
+        extractedText: String,
+        reconstructedText: String = "",
+        approvedText: String = "",
+        answerText: String = "",
+        model: String = ""
     ): ScanSession {
         require(pages.isNotEmpty()) { "A session must contain at least one page." }
 
@@ -52,7 +60,11 @@ class SessionRepository(context: Context) {
                 id = id,
                 createdAt = System.currentTimeMillis(),
                 pagePaths = savedPaths,
-                extractedText = extractedText
+                extractedText = extractedText,
+                reconstructedText = reconstructedText,
+                approvedText = approvedText,
+                answerText = answerText,
+                model = model
             )
 
             writeSession(session)
@@ -102,6 +114,31 @@ class SessionRepository(context: Context) {
     }
 
     @Synchronized
+    fun updateAiResults(
+        id: String,
+        reconstructedText: String,
+        approvedText: String,
+        answerText: String,
+        model: String
+    ): Boolean {
+        val session = getSession(id) ?: return false
+
+        return try {
+            writeSession(
+                session.copy(
+                    reconstructedText = reconstructedText,
+                    approvedText = approvedText,
+                    answerText = answerText,
+                    model = model
+                )
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    @Synchronized
     fun deleteSession(id: String): Boolean {
         if (!id.matches(Regex("[a-fA-F0-9-]{36}"))) return false
 
@@ -118,6 +155,10 @@ class SessionRepository(context: Context) {
             put("id", session.id)
             put("createdAt", session.createdAt)
             put("extractedText", session.extractedText)
+            put("reconstructedText", session.reconstructedText)
+            put("approvedText", session.approvedText)
+            put("answerText", session.answerText)
+            put("model", session.model)
             put("pagePaths", JSONArray(session.pagePaths))
         }
 
@@ -142,7 +183,12 @@ class SessionRepository(context: Context) {
             extractedText = json.optString("extractedText", ""),
             pagePaths = List(paths.length()) { index ->
                 paths.getString(index)
-            }
+            },
+            reconstructedText = json.optString("reconstructedText", ""),
+            approvedText = json.optString("approvedText", ""),
+            answerText = json.optString("answerText", ""),
+            model = json.optString("model", "")
+
         )
     }
 }
