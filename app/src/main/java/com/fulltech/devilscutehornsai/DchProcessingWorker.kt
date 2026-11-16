@@ -1,14 +1,8 @@
 package com.fulltech.devilscutehornsai
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
-import android.os.Build
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
-import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -66,9 +60,6 @@ class DchProcessingWorker(
         const val KEY_SESSION_ID = "session_id"
         const val KEY_ENQUEUED_AT = "enqueued_at"
 
-        private const val CHANNEL_ID = "dch_processing"
-        private const val NOTIFICATION_ID = 7314
-
         private const val ANSWER_IN_FLIGHT = "in_flight"
         private const val ANSWER_UNCERTAIN = "uncertain"
         private const val ANSWER_PENDING = "pending"
@@ -84,7 +75,6 @@ class DchProcessingWorker(
             ?: return failure("Missing scan session identifier.")
 
         try {
-            setForeground(createForegroundInfo("Preparing your document..."))
 
             val token = withContext(Dispatchers.IO) {
                 GatewayTokenStore(applicationContext).read()
@@ -436,41 +426,4 @@ class DchProcessingWorker(
         return Result.failure(workDataOf("error" to message))
     }
 
-    private fun createForegroundInfo(message: String): ForegroundInfo {
-        val manager = applicationContext.getSystemService(
-            Context.NOTIFICATION_SERVICE
-        ) as NotificationManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "AI document processing",
-                    NotificationManager.IMPORTANCE_LOW
-                )
-            )
-        }
-
-        val notification = NotificationCompat.Builder(
-            applicationContext,
-            CHANNEL_ID
-        )
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("Devil's Cute Horns AI")
-            .setContentText(message)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            ForegroundInfo(NOTIFICATION_ID, notification)
-        }
-    }
 }
