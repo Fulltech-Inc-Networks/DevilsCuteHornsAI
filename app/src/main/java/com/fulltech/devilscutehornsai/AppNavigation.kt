@@ -1077,6 +1077,18 @@ private fun SessionDetailScreen(
     onDeleted: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    val voiceEngine = remember(context) {
+        DchVoiceEngine(context.applicationContext)
+    }
+
+    DisposableEffect(voiceEngine) {
+        onDispose {
+            DchHardwareKeyRouter.clear()
+            voiceEngine.shutdown()
+        }
+    }
 
     var session by remember {
         mutableStateOf<ScanSession?>(null)
@@ -1100,6 +1112,27 @@ private fun SessionDetailScreen(
         }.orEmpty()
 
         loading = false
+    }
+
+    LaunchedEffect(session?.answerText) {
+        voiceEngine.setText(session?.answerText.orEmpty())
+    }
+
+    DisposableEffect(voiceEngine, session?.answerText) {
+        if (!session?.answerText.isNullOrBlank()) {
+            DchHardwareKeyRouter.setPlaybackControls(
+                onDownShort = { voiceEngine.next() },
+                onDownLong = { voiceEngine.resume() },
+                onUpShort = { voiceEngine.replay() },
+                onUpLong = { voiceEngine.pause() }
+            )
+        } else {
+            DchHardwareKeyRouter.clear()
+        }
+
+        onDispose {
+            DchHardwareKeyRouter.clear()
+        }
     }
 
     Surface(
@@ -1173,6 +1206,126 @@ private fun SessionDetailScreen(
                             fontSize = 15.sp,
                             lineHeight = 24.sp
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = AppSurface
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Text(
+                                "ANSWER VOICE PLAYER",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                voiceEngine.status,
+                                color = AppMuted,
+                                fontSize = 13.sp
+                            )
+
+                            if (voiceEngine.totalParts > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                val progressText = when {
+                                    voiceEngine.currentPart >= voiceEngine.totalParts ->
+                                        "All parts completed"
+                                    voiceEngine.isPlaying ->
+                                        "Part ${voiceEngine.currentPart + 1} of ${voiceEngine.totalParts}"
+                                    voiceEngine.status == "Paused" ->
+                                        "Paused at part ${voiceEngine.currentPart + 1} of ${voiceEngine.totalParts}"
+                                    else ->
+                                        "${voiceEngine.totalParts} speech part(s)"
+                                }
+
+                                Text(
+                                    progressText,
+                                    color = AppMuted,
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { voiceEngine.play() },
+                                    enabled = currentSession.answerText.isNotBlank(),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("PLAY")
+                                }
+
+                                OutlinedButton(
+                                    onClick = { voiceEngine.pause() },
+                                    enabled = voiceEngine.isPlaying,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("PAUSE")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { voiceEngine.resume() },
+                                    enabled = currentSession.answerText.isNotBlank() &&
+                                        !voiceEngine.isPlaying,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("RESUME")
+                                }
+
+                                OutlinedButton(
+                                    onClick = { voiceEngine.replay() },
+                                    enabled = currentSession.answerText.isNotBlank(),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("REPLAY")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            OutlinedButton(
+                                onClick = { voiceEngine.next() },
+                                enabled = voiceEngine.totalParts > 0 &&
+                                    voiceEngine.currentPart < voiceEngine.totalParts - 1,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("NEXT PART")
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                "Volume Down: short press for next part, long press to resume. Volume Up: short press to replay, long press to pause.",
+                                color = AppMuted,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))

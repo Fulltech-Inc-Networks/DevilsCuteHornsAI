@@ -34,6 +34,26 @@ class MainActivity : ComponentActivity() {
 
         setContent { DevilTheme { DchApp() } }
     }
+
+    override fun onKeyDown(
+        keyCode: Int,
+        event: android.view.KeyEvent
+    ): Boolean {
+        if (DchHardwareKeyRouter.onKeyDown(keyCode, event)) {
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(
+        keyCode: Int,
+        event: android.view.KeyEvent
+    ): Boolean {
+        if (DchHardwareKeyRouter.onKeyUp(keyCode, event)) {
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
 }
 
 @Composable

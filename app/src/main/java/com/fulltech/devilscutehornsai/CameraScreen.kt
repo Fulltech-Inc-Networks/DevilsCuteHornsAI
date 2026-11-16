@@ -126,6 +126,71 @@ fun CameraScreen(
         }
     }
 
+
+    fun capturePage() {
+        val capture = imageCapture ?: return
+        if (capturing || capturedFile != null) return
+
+        val file = try {
+            File.createTempFile("dch_capture_", ".jpg", context.cacheDir)
+        } catch (error: Exception) {
+            cameraError = error.localizedMessage ?: "Unable to prepare the camera capture."
+            return
+        }
+
+        capturing = true
+
+        val options = ImageCapture.OutputFileOptions.Builder(file).build()
+
+        capture.takePicture(
+            options,
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(
+                    output: ImageCapture.OutputFileResults
+                ) {
+                    scope.launch {
+                        try {
+                            val saved = withContext(Dispatchers.IO) {
+                                repository.addPage(sessionId, file)
+                            }
+
+                            val durableFile = File(saved.pagePaths.last())
+                            pageCount = saved.pageCount
+                            capturedFile = durableFile
+                        } catch (error: Exception) {
+                            cameraError = error.localizedMessage
+                                ?: "Unable to save the captured page."
+                        } finally {
+                            file.delete()
+                            capturing = false
+                        }
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    file.delete()
+                    capturing = false
+                    cameraError = exception.message ?: "Photo capture failed."
+                }
+            }
+        )
+    }
+
+    DisposableEffect(imageCapture, capturedFile, capturing) {
+        if (imageCapture != null && capturedFile == null && !capturing) {
+            DchHardwareKeyRouter.setCameraCapture {
+                capturePage()
+            }
+        } else {
+            DchHardwareKeyRouter.clear()
+        }
+
+        onDispose {
+            DchHardwareKeyRouter.clear()
+        }
+    }
+
     val photo = capturedFile
 
     if (photo != null) {
@@ -252,62 +317,7 @@ fun CameraScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Button(
-                    onClick = {
-                        val capture = imageCapture ?: return@Button
-                        if (capturing) return@Button
-
-                        capturing = true
-
-                        val file = File.createTempFile(
-                            "dch_capture_",
-                            ".jpg",
-                            context.cacheDir
-                        )
-
-                        val options = ImageCapture.OutputFileOptions
-                            .Builder(file)
-                            .build()
-
-                        capture.takePicture(
-                            options,
-                            ContextCompat.getMainExecutor(context),
-                            object : ImageCapture.OnImageSavedCallback {
-                                override fun onImageSaved(
-                                    output: ImageCapture.OutputFileResults
-                                ) {
-                                    scope.launch {
-                                        try {
-                                            val saved = withContext(Dispatchers.IO) {
-                                                repository.addPage(sessionId, file)
-                                            }
-
-                                            val durableFile = File(
-                                                saved.pagePaths.last()
-                                            )
-
-                                            pageCount = saved.pageCount
-                                            capturedFile = durableFile
-                                        } catch (error: Exception) {
-                                            cameraError = error.localizedMessage
-                                                ?: "Unable to save the captured page."
-                                        } finally {
-                                            file.delete()
-                                            capturing = false
-                                        }
-                                    }
-                                }
-
-                                override fun onError(
-                                    exception: ImageCaptureException
-                                ) {
-                                    file.delete()
-                                    capturing = false
-                                    cameraError = exception.message
-                                        ?: "Photo capture failed."
-                                }
-                            }
-                        )
-                    },
+                    onClick = { capturePage() },
                     enabled = imageCapture != null && !capturing,
                     modifier = Modifier
                         .size(76.dp),
