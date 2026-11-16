@@ -150,7 +150,7 @@ async function readBoundedBody(request) {
 }
 
 async function callGemini(env, parts, options = {}) {
-  const model = env.GEMINI_MODEL || "gemini-3.8-flash";
+  const model = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
   const endpoint =
     "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -233,7 +233,7 @@ export default {
       return json({
         service: "DCH AI Gateway",
         status: "online",
-        model: env.GEMINI_MODEL || "gemini-3.8-flash"
+        model: env.GEMINI_MODEL || "gemini-3.5-flash-lite"
       });
     }
 
@@ -396,7 +396,7 @@ Return only the reconstructed document content. Do not add an introduction or a 
 
       return json({
         text: result.text,
-        model: env.GEMINI_MODEL || "gemini-3.8-flash",
+        model: env.GEMINI_MODEL || "gemini-3.5-flash-lite",
         pageNumber
       });
     }
@@ -467,7 +467,7 @@ ${questionText.trim()}
 
       return json({
         text: result.text,
-        model: env.GEMINI_MODEL || "gemini-3.8-flash"
+        model: env.GEMINI_MODEL || "gemini-3.5-flash-lite"
       });
     }
 
