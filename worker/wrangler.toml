@@ -1,0 +1,16 @@
+name = "dch-ai-gateway"
+main = "src/index.js"
+compatibility_date = "2026-11-16"
+
+[vars]
+GEMINI_MODEL = "gemini-3.8-flash"
+
+[[ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "116001"
+simple = { limit = 20, period = 60 }
+
+[[ratelimits]]
+name = "AI_RATE_LIMITER"
+namespace_id = "116002"
+simple = { limit = 12, period = 60 }
