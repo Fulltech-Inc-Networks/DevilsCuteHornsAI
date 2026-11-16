@@ -29,42 +29,18 @@ object AppUpdateManager {
     private const val PACKAGE_NAME =
         "com.fulltech.devilscutehornsai"
 
-    private const val RELEASES_API =
-        "https://api.github.com/repos/Fulltech-Inc-Networks/DevilsCuteHornsAI/releases/latest"
+    private const val LATEST_MANIFEST_URL =
+        "https://github.com/Fulltech-Inc-Networks/DevilsCuteHornsAI/releases/latest/download/latest.json"
 
-    private const val RELEASE_DOWNLOAD_PREFIX =
-        "https://github.com/Fulltech-Inc-Networks/DevilsCuteHornsAI/releases/download/"
+    private const val LATEST_APK_DOWNLOAD_PREFIX =
+        "https://github.com/Fulltech-Inc-Networks/DevilsCuteHornsAI/releases/latest/download/"
 
     suspend fun checkForUpdate(context: Context): AppUpdate? =
         withContext(Dispatchers.IO) {
 
-            val release = JSONObject(
-                requestText(RELEASES_API)
+            val manifest = JSONObject(
+                requestText(LATEST_MANIFEST_URL)
             )
-
-            val assets = release.getJSONArray("assets")
-
-            var manifestUrl: String? = null
-
-            for (i in 0 until assets.length()) {
-                val asset = assets.getJSONObject(i)
-
-                if (asset.optString("name") == "latest.json") {
-                    manifestUrl = asset.optString("browser_download_url")
-                    break
-                }
-            }
-
-            val url = manifestUrl
-                ?: throw IllegalStateException(
-                    "The latest release has no update manifest."
-                )
-
-            if (!url.startsWith(RELEASE_DOWNLOAD_PREFIX)) {
-                throw SecurityException("Untrusted update manifest URL.")
-            }
-
-            val manifest = JSONObject(requestText(url))
 
             val versionCode = manifest.getLong("versionCode")
             val versionName = manifest.getString("versionName")
@@ -91,23 +67,10 @@ object AppUpdateManager {
                 "Invalid APK checksum."
             }
 
-            val apkUrl = RELEASE_DOWNLOAD_PREFIX +
-                release.getString("tag_name") + "/" + apkAsset
-
             val installedVersion = installedVersionCode(context)
 
             if (versionCode <= installedVersion) {
                 return@withContext null
-            }
-
-            val releaseAssetExists = (0 until assets.length()).any { i ->
-                assets.getJSONObject(i).optString("name") == apkAsset
-            }
-
-            if (!releaseAssetExists) {
-                throw IllegalStateException(
-                    "The APK listed in the update manifest is missing."
-                )
             }
 
             AppUpdate(
@@ -115,7 +78,7 @@ object AppUpdateManager {
                 versionName = versionName,
                 apkAsset = apkAsset,
                 sha256 = sha256,
-                downloadUrl = apkUrl
+                downloadUrl = LATEST_APK_DOWNLOAD_PREFIX + apkAsset
             )
         }
 
