@@ -26,21 +26,29 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val CameraBlack = Color(0xFF090909)
 private val CameraRed = Color(0xFFDC143C)
 
 @Composable
 fun CameraScreen(
+    sessionId: String,
+    repository: SessionRepository,
     onBack: () -> Unit,
-    onImageReady: (List<File>) -> Unit
+    onFinished: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = context as LifecycleOwner
 
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var capturedFile by remember { mutableStateOf<File?>(null) }
-    var capturedPages by remember { mutableStateOf<List<File>>(emptyList()) }
+    var pageCount by remember { mutableIntStateOf(
+        repository.getSession(sessionId)?.pageCount ?: 0
+    ) }
+    val scope = rememberCoroutineScope()
     var cameraError by remember { mutableStateOf<String?>(null) }
     var flashAvailable by remember { mutableStateOf(false) }
     var flashEnabled by remember { mutableStateOf(false) }
@@ -123,17 +131,26 @@ fun CameraScreen(
     if (photo != null) {
         PhotoReviewScreen(
             file = photo,
-            pageNumber = capturedPages.size + 1,
+            pageNumber = pageCount,
             onRetake = {
-                photo.delete()
-                capturedFile = null
+                scope.launch {
+                    val removed = withContext(Dispatchers.IO) {
+                        repository.removeLastPage(sessionId)
+                    }
+
+                    if (removed) {
+                        pageCount = (pageCount - 1).coerceAtLeast(0)
+                        capturedFile = null
+                    } else {
+                        cameraError = "Unable to remove the captured page."
+                    }
+                }
             },
             onAddPage = {
-                capturedPages = capturedPages + photo
                 capturedFile = null
             },
             onFinish = {
-                onImageReady(capturedPages + photo)
+                onFinished(sessionId)
             }
         )
         return
@@ -161,10 +178,7 @@ fun CameraScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(
-                    onClick = {
-                        capturedPages.forEach { it.delete() }
-                        onBack()
-                    }
+                    onClick = onBack
                 ) {
                     Text("CLOSE", color = Color.White)
                 }
@@ -261,8 +275,26 @@ fun CameraScreen(
                                 override fun onImageSaved(
                                     output: ImageCapture.OutputFileResults
                                 ) {
-                                    capturedFile = file
-                                    capturing = false
+                                    scope.launch {
+                                        try {
+                                            val saved = withContext(Dispatchers.IO) {
+                                                repository.addPage(sessionId, file)
+                                            }
+
+                                            val durableFile = File(
+                                                saved.pagePaths.last()
+                                            )
+
+                                            pageCount = saved.pageCount
+                                            capturedFile = durableFile
+                                        } catch (error: Exception) {
+                                            cameraError = error.localizedMessage
+                                                ?: "Unable to save the captured page."
+                                        } finally {
+                                            file.delete()
+                                            capturing = false
+                                        }
+                                    }
                                 }
 
                                 override fun onError(

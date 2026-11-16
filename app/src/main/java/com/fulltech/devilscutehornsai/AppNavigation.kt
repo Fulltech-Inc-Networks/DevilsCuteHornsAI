@@ -26,8 +26,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.work.WorkManager
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -49,13 +52,32 @@ fun DchApp() {
     var route by remember { mutableStateOf("home") }
     var pages by remember { mutableStateOf<List<File>>(emptyList()) }
     var activeSessionId by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun openCameraWithDraft() {
+        scope.launch {
+            try {
+                val draft = withContext(Dispatchers.IO) {
+                    repository.createDraftSession()
+                }
+                activeSessionId = draft.id
+                route = "camera"
+            } catch (error: Exception) {
+                Toast.makeText(
+                    context,
+                    error.localizedMessage ?: "Unable to start a scan.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     val cameraPermissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (granted) {
-                route = "camera"
+                openCameraWithDraft()
             } else {
                 Toast.makeText(
                     context,
@@ -67,30 +89,46 @@ fun DchApp() {
 
     when (route) {
         "camera" -> {
-            CameraScreen(
-                onBack = { route = "home" },
-                onImageReady = { captured ->
-                    pages = captured
-                    route = "review"
-                }
-            )
+            val draftId = activeSessionId
+            if (draftId != null) {
+                CameraScreen(
+                    sessionId = draftId,
+                    repository = repository,
+                    onBack = { route = "home" },
+                    onFinished = { id ->
+                        val session = repository.getSession(id)
+                        if (session != null && session.pagePaths.isNotEmpty()) {
+                            activeSessionId = id
+                            pages = session.pagePaths.map(::File)
+                            route = "review"
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Capture at least one page first.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                )
+            } else {
+                route = "home"
+            }
         }
 
         "review" -> {
-            OcrReviewScreen(
-                pages = pages,
-                repository = repository,
-                onSaved = {
-                    pages.forEach { it.delete() }
-                    pages = emptyList()
-                    route = "history"
-                },
-                onCancel = {
-                    pages.forEach { it.delete() }
-                    pages = emptyList()
-                    route = "home"
-                }
-            )
+            val reviewId = activeSessionId
+            if (reviewId != null) {
+                OcrReviewScreen(
+                    sessionId = reviewId,
+                    repository = repository,
+                    onSaved = {
+                        pages = emptyList()
+                        route = "detail"
+                    }
+                )
+            } else {
+                route = "history"
+            }
         }
 
         "settings" -> {
@@ -133,7 +171,7 @@ fun DchApp() {
                     ) == PackageManager.PERMISSION_GRANTED
 
                     if (granted) {
-                        route = "camera"
+                        openCameraWithDraft()
                     } else {
                         cameraPermissionLauncher.launch(
                             Manifest.permission.CAMERA
@@ -302,6 +340,12 @@ private fun GatewaySettingsScreen(
     var checking by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var statusSuccess by remember { mutableStateOf(false) }
+
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateInstalling by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var updateSuccess by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -481,6 +525,179 @@ private fun GatewaySettingsScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = AppSurface
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        "APP UPDATES",
+                        color = AppRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        "Check GitHub for the latest verified version of DCH AI.",
+                        color = AppMuted,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp
+                    )
+
+                    if (availableUpdate != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            "Available version: ${availableUpdate!!.versionName}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                updateChecking = true
+                                updateStatus = null
+                                availableUpdate = null
+
+                                try {
+                                    val result = AppUpdateManager.checkForUpdate(
+                                        context.applicationContext
+                                    )
+
+                                    availableUpdate = result
+
+                                    updateStatus = if (result == null) {
+                                        "DCH AI is up to date."
+                                    } else {
+                                        "Version ${result.versionName} is available."
+                                    }
+
+                                    updateSuccess = true
+                                } catch (error: Exception) {
+                                    updateStatus = error.localizedMessage
+                                        ?: "Unable to check for updates."
+                                    updateSuccess = false
+                                } finally {
+                                    updateChecking = false
+                                }
+                            }
+                        },
+                        enabled = !updateChecking && !updateInstalling,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        if (updateChecking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(19.dp),
+                                color = AppRed,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                        }
+
+                        Text(
+                            if (updateChecking) {
+                                "CHECKING FOR UPDATES..."
+                            } else {
+                                "CHECK FOR UPDATES"
+                            },
+                            color = Color.White
+                        )
+                    }
+
+                    if (availableUpdate != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                val selectedUpdate = availableUpdate
+                                    ?: return@Button
+
+                                scope.launch {
+                                    updateInstalling = true
+                                    updateStatus = "Downloading and verifying update..."
+                                    updateSuccess = false
+
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            AppUpdateManager.downloadAndInstall(
+                                                context.applicationContext,
+                                                selectedUpdate
+                                            )
+                                        }
+
+                                        updateStatus =
+                                            "Verified APK submitted to Android installer."
+                                        updateSuccess = true
+                                    } catch (error: Exception) {
+                                        updateStatus = error.localizedMessage
+                                            ?: "Unable to install the update."
+                                        updateSuccess = false
+                                    } finally {
+                                        updateInstalling = false
+                                    }
+                                }
+                            },
+                            enabled = !updateChecking && !updateInstalling,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppRed
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (updateInstalling) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(19.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                            }
+
+                            Text(
+                                if (updateInstalling) {
+                                    "PREPARING UPDATE..."
+                                } else {
+                                    "DOWNLOAD AND INSTALL"
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (updateStatus != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            updateStatus!!,
+                            color = if (updateSuccess) {
+                                Color(0xFF72D69A)
+                            } else {
+                                AppRed
+                            },
+                            fontSize = 12.sp,
+                            lineHeight = 19.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             Text(
                 "SECURITY NOTE",
                 color = AppRed,
@@ -505,70 +722,124 @@ private fun GatewaySettingsScreen(
 
 @Composable
 private fun OcrReviewScreen(
-    pages: List<File>,
+    sessionId: String,
     repository: SessionRepository,
-    onSaved: () -> Unit,
-    onCancel: () -> Unit
+    onSaved: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val recognizer = remember { OcrEngine() }
+    val context = LocalContext.current.applicationContext
 
-    var extractedText by remember { mutableStateOf("") }
-    var processing by remember { mutableStateOf(true) }
-    var saving by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var progress by remember { mutableStateOf(0) }
-
-    DisposableEffect(recognizer) {
-        onDispose { recognizer.close() }
+    var processing by remember(sessionId) { mutableStateOf(true) }
+    var phase by remember(sessionId) {
+        mutableStateOf("Preparing your document...")
     }
+    var progress by remember(sessionId) { mutableIntStateOf(0) }
+    var pageCount by remember(sessionId) { mutableIntStateOf(0) }
+    var errorMessage by remember(sessionId) { mutableStateOf<String?>(null) }
+    var answerUncertain by remember(sessionId) { mutableStateOf(false) }
+    var retryKey by remember(sessionId) { mutableIntStateOf(0) }
 
-    LaunchedEffect(pages) {
+    LaunchedEffect(sessionId, retryKey) {
         processing = true
         errorMessage = null
-        progress = 0
+        answerUncertain = false
+        phase = "Starting background AI processing..."
 
-        val output = StringBuilder()
+        try {
+            val initial = withContext(Dispatchers.IO) {
+                repository.getSession(sessionId)
+            } ?: throw IllegalStateException("The scan session could not be found.")
 
-        pages.forEachIndexed { index, file ->
-            val completion = CompletableDeferred<Result<String>>()
-
-            recognizer.recognize(context, file) { result ->
-                completion.complete(result)
+            if (initial.pageCount == 0) {
+                throw IllegalStateException("No captured pages were found.")
             }
 
-            val result = completion.await()
+            if (initial.answerText.isNotBlank()) {
+                onSaved()
+                return@LaunchedEffect
+            }
 
-            output.append("PAGE ${index + 1}\n\n")
+            pageCount = initial.pageCount
+            progress = initial.successfulPageCount
 
-            result.fold(
-                onSuccess = { text ->
-                    if (text.isBlank()) {
-                        output.append(
-                            "[No readable text detected on this page.]\n"
-                        )
-                    } else {
-                        output.append(text.trim())
-                        output.append('\n')
-                    }
-                },
-                onFailure = { failure ->
-                    output.append(
-                        "[Recognition failed: " +
-                            (failure.localizedMessage ?: "Unknown error") +
-                            "]\n"
-                    )
-                    errorMessage = "Some pages could not be recognized."
+            DchWorkScheduler.enqueue(context, sessionId)
+
+            val workManager = WorkManager.getInstance(context)
+            val uniqueName = DchWorkScheduler.uniqueName(sessionId)
+
+            while (true) {
+                val workInfos = withContext(Dispatchers.IO) {
+                    workManager.getWorkInfosForUniqueWork(uniqueName).get()
                 }
-            )
 
-            output.append("\n\n")
-            progress = index + 1
+                val info = workInfos.firstOrNull()
+
+                if (info == null) {
+                    phase = "Waiting for background processing..."
+                    delay(500)
+                    continue
+                }
+
+                progress = info.progress.getInt("progress", progress)
+                pageCount = info.progress.getInt("page_count", pageCount)
+                phase = info.progress.getString("phase")
+                    ?: when (info.state) {
+                        androidx.work.WorkInfo.State.ENQUEUED ->
+                            "Waiting for a network connection..."
+                        androidx.work.WorkInfo.State.BLOCKED ->
+                            "Waiting for another task..."
+                        androidx.work.WorkInfo.State.RUNNING ->
+                            "Processing your document..."
+                        else -> phase
+                    }
+
+                when (info.state) {
+                    androidx.work.WorkInfo.State.SUCCEEDED -> {
+                        val completed = withContext(Dispatchers.IO) {
+                            repository.getSession(sessionId)
+                        }
+
+                        if (completed?.answerText.isNullOrBlank()) {
+                            throw IllegalStateException(
+                                "Processing finished, but no saved answer was found."
+                            )
+                        }
+
+                        phase = "Answers saved. Opening your results..."
+                        onSaved()
+                        return@LaunchedEffect
+                    }
+
+                    androidx.work.WorkInfo.State.FAILED -> {
+                        val failedSession = withContext(Dispatchers.IO) {
+                            repository.getSession(sessionId)
+                        }
+
+                        answerUncertain =
+                            failedSession?.answerStatus == "uncertain"
+
+                        throw IllegalStateException(
+                            info.outputData.getString("error")
+                                ?: "Background processing failed. Your captured pages are preserved."
+                        )
+                    }
+
+                    androidx.work.WorkInfo.State.CANCELLED -> {
+                        throw IllegalStateException(
+                            "Background processing was cancelled. Your saved pages are preserved."
+                        )
+                    }
+
+                    else -> delay(600)
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            errorMessage = error.localizedMessage
+                ?: "Processing failed. Your captured pages have been preserved."
+        } finally {
+            processing = false
         }
-
-        extractedText = output.toString().trim()
-        processing = false
     }
 
     Surface(
@@ -578,33 +849,65 @@ private fun OcrReviewScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
+            if (processing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(58.dp),
+                    color = AppRed,
+                    strokeWidth = 4.dp
+                )
+            } else {
+                Text(
+                    if (answerUncertain) "CHECK YOUR SAVED RESULTS"
+                    else "PROCESSING NEEDS ATTENTION",
+                    color = AppRed,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
             Text(
-                "TEXT RECOGNITION",
+                "DEVIL'S CUTE HORNS AI",
                 color = AppRed,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                if (processing) {
-                    "Recognizing page $progress of ${pages.size}..."
-                } else {
-                    "${pages.size} page(s) processed. Review and correct the text."
-                },
-                color = AppMuted,
-                fontSize = 13.sp
+                phase,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
             )
 
-            if (processing) {
-                Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                if (pageCount > 0) {
+                    "$progress of $pageCount pages reconstructed"
+                } else {
+                    "Your processing task is managed in the background."
+                },
+                color = AppMuted,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center
+            )
+
+            if (pageCount > 0) {
+                Spacer(modifier = Modifier.height(20.dp))
+
                 LinearProgressIndicator(
                     progress = {
-                        if (pages.isEmpty()) 0f
-                        else progress.toFloat() / pages.size
+                        (progress.toFloat() / pageCount.coerceAtLeast(1))
+                            .coerceIn(0f, 1f)
                     },
                     modifier = Modifier.fillMaxWidth(),
                     color = AppRed
@@ -612,77 +915,38 @@ private fun OcrReviewScreen(
             }
 
             if (errorMessage != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(errorMessage!!, color = AppRed, fontSize = 12.sp)
-            }
+                Spacer(modifier = Modifier.height(24.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            OutlinedTextField(
-                value = extractedText,
-                onValueChange = { extractedText = it },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                enabled = !processing,
-                label = { Text("Extracted text") },
-                placeholder = {
-                    Text("Recognized text will appear here...")
-                },
-                minLines = 12
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        saving = true
-                        errorMessage = null
-
-                        val result = runCatching {
-                            withContext(Dispatchers.IO) {
-                                repository.saveSession(
-                                    pages,
-                                    extractedText.trim()
-                                )
-                            }
-                        }
-
-                        saving = false
-
-                        result.onSuccess {
-                            onSaved()
-                        }.onFailure {
-                            errorMessage = it.localizedMessage
-                                ?: "Unable to save this session."
-                        }
-                    }
-                },
-                enabled = !processing && !saving && pages.isNotEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = AppRed
-                )
-            ) {
                 Text(
-                    if (saving) "SAVING..." else "SAVE SESSION",
-                    fontWeight = FontWeight.Bold
+                    errorMessage!!,
+                    color = AppRed,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center
                 )
-            }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                if (answerUncertain) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "The AI may already have processed the answer request. " +
+                            "Do not submit it again until you have checked your saved session.",
+                        color = AppMuted,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
 
-            OutlinedButton(
-                onClick = onCancel,
-                enabled = !saving,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Text("DISCARD SCAN", color = Color.White)
+                    Button(
+                        onClick = { retryKey++ },
+                        enabled = !processing,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppRed
+                        )
+                    ) {
+                        Text("RETRY PROCESSING")
+                    }
+                }
             }
         }
     }
@@ -817,7 +1081,7 @@ private fun SessionDetailScreen(
     var session by remember {
         mutableStateOf<ScanSession?>(null)
     }
-    var text by remember { mutableStateOf("") }
+    var paperText by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var working by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -826,7 +1090,15 @@ private fun SessionDetailScreen(
         session = withContext(Dispatchers.IO) {
             repository.getSession(sessionId)
         }
-        text = session?.extractedText.orEmpty()
+
+        paperText = session?.let {
+            if (it.reconstructedText.isNotBlank()) {
+                it.reconstructedText
+            } else {
+                it.extractedText
+            }
+        }.orEmpty()
+
         loading = false
     }
 
@@ -837,6 +1109,7 @@ private fun SessionDetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(20.dp)
         ) {
             TextButton(onClick = onBack) {
@@ -851,12 +1124,17 @@ private fun SessionDetailScreen(
                 }
 
                 session == null -> {
-                    Text("This session could not be found.", color = AppMuted)
+                    Text(
+                        "This session could not be found.",
+                        color = AppMuted
+                    )
                 }
 
                 else -> {
+                    val currentSession = session!!
+
                     Text(
-                        "SAVED SESSION",
+                        "SESSION RESULTS",
                         color = AppRed,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 2.sp
@@ -865,41 +1143,110 @@ private fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        "${session!!.pageCount} scanned page(s)",
+                        "${currentSession.pageCount} scanned page(s)",
                         color = AppMuted
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Text(
+                        "AI-GENERATED ANSWERS",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = AppSurface
+                        )
+                    ) {
+                        Text(
+                            text = currentSession.answerText.ifBlank {
+                                "No AI-generated answers are saved for this session yet."
+                            },
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            lineHeight = 24.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Text(
+                        "RECONSTRUCTED PAPER",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        "You can edit the reconstructed document without changing your AI-generated answers.",
+                        color = AppMuted,
+                        fontSize = 12.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        label = { Text("Session text") },
-                        minLines = 12
+                        value = paperText,
+                        onValueChange = { paperText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Paper text") },
+                        minLines = 8
                     )
 
                     if (message != null) {
-                        Text(message!!, color = AppRed, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            message!!,
+                            color = AppRed,
+                            fontSize = 12.sp
+                        )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
                         onClick = {
                             scope.launch {
                                 working = true
+                                message = null
+
+                                val hasAiDocument =
+                                    currentSession.reconstructedText.isNotBlank() ||
+                                    currentSession.answerText.isNotBlank()
+
                                 val success = withContext(Dispatchers.IO) {
-                                    repository.updateText(sessionId, text)
+                                    if (hasAiDocument) {
+                                        repository.updateReconstructedText(
+                                            sessionId,
+                                            paperText
+                                        )
+                                    } else {
+                                        repository.updateText(
+                                            sessionId,
+                                            paperText
+                                        )
+                                    }
                                 }
-                                working = false
-                                message = if (success) {
-                                    "Changes saved."
+
+                                if (success) {
+                                    session = withContext(Dispatchers.IO) {
+                                        repository.getSession(sessionId)
+                                    }
+                                    message = "Paper changes saved."
                                 } else {
-                                    "Unable to save changes."
+                                    message = "Unable to save paper changes."
                                 }
+
+                                working = false
                             }
                         },
                         enabled = !working,
@@ -910,18 +1257,22 @@ private fun SessionDetailScreen(
                             containerColor = AppRed
                         )
                     ) {
-                        Text(if (working) "SAVING..." else "SAVE CHANGES")
+                        Text(
+                            if (working) "SAVING..." else "SAVE PAPER CHANGES"
+                        )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedButton(
                         onClick = {
                             scope.launch {
                                 working = true
+
                                 withContext(Dispatchers.IO) {
                                     repository.deleteSession(sessionId)
                                 }
+
                                 working = false
                                 onDeleted()
                             }
@@ -933,6 +1284,8 @@ private fun SessionDetailScreen(
                     ) {
                         Text("DELETE SESSION", color = AppRed)
                     }
+
+                    Spacer(modifier = Modifier.height(20.dp))
                 }
             }
         }

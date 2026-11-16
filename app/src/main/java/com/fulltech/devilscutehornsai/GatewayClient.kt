@@ -16,7 +16,11 @@ data class GatewayResult(
     val model: String
 )
 
-class GatewayException(message: String) : Exception(message)
+class GatewayException(
+    message: String,
+    val retryable: Boolean = false,
+    val httpStatus: Int? = null
+) : Exception(message)
 
 object GatewayClient {
 
@@ -285,7 +289,9 @@ object GatewayClient {
                 JSONObject(response)
             } catch (_: Exception) {
                 throw GatewayException(
-                    "The AI gateway returned an invalid response (HTTP $status)."
+                    "The AI gateway returned an invalid response (HTTP $status).",
+                    retryable = status == 429 || status >= 500,
+                    httpStatus = status
                 )
             }
 
@@ -295,7 +301,11 @@ object GatewayClient {
                     "AI request failed (HTTP $status)."
                 )
 
-                throw GatewayException(message)
+                throw GatewayException(
+                    message,
+                    retryable = status == 429 || status >= 500,
+                    httpStatus = status
+                )
             }
 
             val text = json.optString("text", "").trim()
@@ -312,7 +322,8 @@ object GatewayClient {
             throw error
         } catch (error: Exception) {
             throw GatewayException(
-                error.localizedMessage ?: "Unable to contact the AI gateway."
+                error.localizedMessage ?: "Unable to contact the AI gateway.",
+                retryable = true
             )
         } finally {
             connection?.disconnect()

@@ -20,3 +20,8 @@ local.properties
 .env.*
 !.env.example
 secrets.properties
+
+# Android signing credentials
+*.jks
+*.keystore
+*.p12

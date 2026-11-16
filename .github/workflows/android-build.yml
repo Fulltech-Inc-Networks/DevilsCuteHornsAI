@@ -35,13 +35,41 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+      - name: Build debug and optimized release APKs
+        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: DCH-AI-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: DCH-AI-Android-APKs
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Report APK sizes
+        run: |
+          python - <<'PYTHON'
+          from pathlib import Path
+
+          files = [
+              Path("app/build/outputs/apk/debug/app-debug.apk"),
+              Path("app/build/outputs/apk/release/app-release-unsigned.apk"),
+          ]
+
+          limit = 60 * 1024 * 1024
+
+          for file in files:
+              if not file.exists():
+                  raise SystemExit(f"Missing APK: {file}")
+
+              size = file.stat().st_size
+              print(f"{file.name}: {size / (1024 * 1024):.2f} MiB")
+
+              if "release" in file.name:
+                  print(
+                      "Release size target:",
+                      "PASS" if size < limit else "NOT YET MET"
+                  )
+          PYTHON
