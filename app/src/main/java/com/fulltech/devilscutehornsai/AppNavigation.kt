@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -132,9 +133,19 @@ fun DchApp() {
         }
 
         "settings" -> {
-            GatewaySettingsScreen(
-                onBack = { route = "home" }
+            SettingsHubScreen(
+                onBack = { route = "home" },
+                onReadingSettings = { route = "reading_settings" },
+                onGatewaySettings = { route = "gateway_settings" }
             )
+        }
+
+        "reading_settings" -> {
+            ReadingSettingsScreen(onBack = { route = "settings" })
+        }
+
+        "gateway_settings" -> {
+            GatewaySettingsScreen(onBack = { route = "settings" })
         }
 
         "history" -> {
@@ -306,7 +317,7 @@ private fun DashboardScreen(
                             .fillMaxWidth()
                             .height(52.dp)
                     ) {
-                        Text("AI GATEWAY SETTINGS", color = Color.White)
+                        Text("SETTINGS", color = Color.White)
                     }
                 }
             }
@@ -721,6 +732,378 @@ private fun GatewaySettingsScreen(
 }
 
 @Composable
+private fun SettingsHubScreen(
+    onBack: () -> Unit,
+    onReadingSettings: () -> Unit,
+    onGatewaySettings: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppBlack)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+    ) {
+        TextButton(onClick = onBack) {
+            Text("BACK", color = AppRed)
+        }
+
+        Text(
+            text = "Settings",
+            color = Color.White,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Text(
+            text = "Personalise how Devil's Cute Horns AI works and reads your answers.",
+            color = AppMuted,
+            fontSize = 14.sp,
+            lineHeight = 21.sp,
+            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onReadingSettings),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AppSurface)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    "Reading & Display",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Voice, accent, speed, pitch, answer formatting, font size and spacing.",
+                    color = AppMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(top = 7.dp)
+                )
+                Text(
+                    "CONFIGURE  ›",
+                    color = AppRed,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onGatewaySettings),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AppSurface)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    "AI Gateway",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Manage your AI connection, gateway token and app updates.",
+                    color = AppMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(top = 7.dp)
+                )
+                Text(
+                    "CONFIGURE  ›",
+                    color = AppRed,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadingSettingsScreen(
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+
+    val store = remember(context) {
+        DchReadingSettingsStore(context.applicationContext)
+    }
+
+    var settings by remember {
+        mutableStateOf(store.read())
+    }
+
+    val voiceEngine = remember(context) {
+        DchVoiceEngine(context.applicationContext)
+    }
+
+    var voiceMenuExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(settings) {
+        store.save(settings)
+        voiceEngine.applySettings(settings)
+    }
+
+    DisposableEffect(voiceEngine) {
+        onDispose {
+            voiceEngine.shutdown()
+        }
+    }
+
+    val voices = voiceEngine.availableVoices
+    val selectedVoice = voices.firstOrNull {
+        it.name == settings.voiceName
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppBlack)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+    ) {
+        TextButton(onClick = onBack) {
+            Text("BACK", color = AppRed)
+        }
+
+        Text(
+            "Reading & Display",
+            color = Color.White,
+            fontSize = 25.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Text(
+            "Adjust how answers look and sound when read aloud.",
+            color = AppMuted,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 6.dp, bottom = 22.dp)
+        )
+
+        Text(
+            "VOICE",
+            color = AppRed,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp
+        )
+
+        Text(
+            "English voice and accent",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
+        )
+
+        Box {
+            OutlinedButton(
+                onClick = { voiceMenuExpanded = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    selectedVoice?.label ?: if (settings.voiceName.isBlank()) {
+                        "System default English voice"
+                    } else {
+                        "Selected voice unavailable"
+                    },
+                    color = Color.White
+                )
+            }
+
+            DropdownMenu(
+                expanded = voiceMenuExpanded,
+                onDismissRequest = { voiceMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("System default English voice") },
+                    onClick = {
+                        settings = settings.copy(voiceName = "")
+                        voiceMenuExpanded = false
+                    }
+                )
+
+                voices.forEach { voice ->
+                    DropdownMenuItem(
+                        text = {
+                            Text("${voice.label} (${voice.locale})")
+                        },
+                        onClick = {
+                            settings = settings.copy(voiceName = voice.name)
+                            voiceMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        if (voices.isEmpty()) {
+            Text(
+                "Loading installed voices. Available voices depend on your Android Text-to-Speech engine.",
+                color = AppMuted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Text(
+            "Speech rate: ${"%.2f".format(settings.speechRate)}",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold
+        )
+        Slider(
+            value = settings.speechRate,
+            onValueChange = {
+                settings = settings.copy(speechRate = it)
+            },
+            valueRange = 0.65f..1.2f
+        )
+        Text(
+            "Slower speech is easier to follow. Default: 0.82.",
+            color = AppMuted,
+            fontSize = 12.sp
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Text(
+            "Voice pitch: ${"%.2f".format(settings.speechPitch)}",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold
+        )
+        Slider(
+            value = settings.speechPitch,
+            onValueChange = {
+                settings = settings.copy(speechPitch = it)
+            },
+            valueRange = 0.8f..1.2f
+        )
+
+        Button(
+            onClick = {
+                voiceEngine.setText(
+                    "This is a voice preview. Your answers will be read at the speed and pitch selected here."
+                )
+                voiceEngine.play()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AppRed)
+        ) {
+            Text("TEST VOICE", color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Text(
+            "ANSWER DISPLAY",
+            color = AppRed,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp
+        )
+
+        Text(
+            "Answer font size: ${settings.fontSize.toInt()} sp",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+        Slider(
+            value = settings.fontSize,
+            onValueChange = {
+                settings = settings.copy(fontSize = it)
+            },
+            valueRange = 13f..24f
+        )
+
+        Text(
+            "Paragraph spacing: ${settings.paragraphSpacing.toInt()} dp",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold
+        )
+        Slider(
+            value = settings.paragraphSpacing,
+            onValueChange = {
+                settings = settings.copy(paragraphSpacing = it)
+            },
+            valueRange = 8f..32f
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        HorizontalDivider(color = AppMuted.copy(alpha = 0.25f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Clean answer formatting", color = Color.White)
+                Text(
+                    "Remove Markdown decoration while preserving useful content.",
+                    color = AppMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+            Switch(
+                checked = settings.cleanFormatting,
+                onCheckedChange = {
+                    settings = settings.copy(cleanFormatting = it)
+                }
+            )
+        }
+
+        HorizontalDivider(color = AppMuted.copy(alpha = 0.25f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Read question headings", color = Color.White)
+                Text(
+                    "Include question numbers and headings in spoken answers.",
+                    color = AppMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+            Switch(
+                checked = settings.includeQuestionHeadings,
+                onCheckedChange = {
+                    settings = settings.copy(includeQuestionHeadings = it)
+                }
+            )
+        }
+
+        OutlinedButton(
+            onClick = {
+                settings = DchReadingSettings()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 22.dp, bottom = 30.dp)
+        ) {
+            Text("RESTORE DEFAULTS", color = Color.White)
+        }
+    }
+}
+
 private fun OcrReviewScreen(
     sessionId: String,
     repository: SessionRepository,
@@ -1084,6 +1467,14 @@ private fun SessionDetailScreen(
         DchVoiceEngine(context.applicationContext)
     }
 
+    val readingSettingsStore = remember(context) {
+        DchReadingSettingsStore(context.applicationContext)
+    }
+
+    var readingSettings by remember {
+        mutableStateOf(readingSettingsStore.read())
+    }
+
     DisposableEffect(voiceEngine) {
         onDispose {
             DchHardwareKeyRouter.clear()
@@ -1126,8 +1517,19 @@ private fun SessionDetailScreen(
         }
     }
 
-    LaunchedEffect(session?.answerText) {
-        voiceEngine.setText(session?.answerText.orEmpty())
+    LaunchedEffect(readingSettings) {
+        readingSettingsStore.save(readingSettings)
+        voiceEngine.applySettings(readingSettings)
+    }
+
+    LaunchedEffect(session?.answerText, readingSettings) {
+        voiceEngine.setText(
+            DchAnswerFormatter.formatForSpeech(
+                session?.answerText.orEmpty(),
+                readingSettings.includeQuestionHeadings,
+                readingSettings.cleanFormatting
+            )
+        )
     }
 
     DisposableEffect(voiceEngine, session?.answerText) {
@@ -1209,15 +1611,41 @@ private fun SessionDetailScreen(
                             containerColor = AppSurface
                         )
                     ) {
-                        Text(
-                            text = currentSession.answerText.ifBlank {
-                                "No AI-generated answers are saved for this session yet."
-                            },
-                            modifier = Modifier.padding(16.dp),
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            lineHeight = 24.sp
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            val formattedAnswer =
+                                DchAnswerFormatter.formatForDisplay(
+                                    currentSession.answerText,
+                                    readingSettings.cleanFormatting
+                                )
+
+                            if (formattedAnswer.isBlank()) {
+                                Text(
+                                    "No AI-generated answers are saved for this session yet.",
+                                    color = AppMuted,
+                                    fontSize = readingSettings.fontSize.sp
+                                )
+                            } else {
+                                formattedAnswer
+                                    .split(Regex("\\n\\s*\\n"))
+                                    .forEach { paragraph ->
+                                        if (paragraph.isNotBlank()) {
+                                            Text(
+                                                text = paragraph.trim(),
+                                                color = Color.White,
+                                                fontSize = readingSettings.fontSize.sp,
+                                                lineHeight = (readingSettings.fontSize * 1.5f).sp,
+                                                modifier = Modifier.padding(
+                                                    bottom = readingSettings.paragraphSpacing.dp
+                                                )
+                                            )
+                                        }
+                                    }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))

@@ -4,12 +4,19 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.speech.tts.UtteranceProgressListener
 import android.view.KeyEvent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.util.Locale
+
+data class DchVoiceOption(
+    val name: String,
+    val label: String,
+    val locale: String
+)
 
 class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
 
@@ -30,6 +37,9 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
     private var pendingPlay = false
     private var paused = false
     private var parts = emptyList<String>()
+    private var readingSettings = DchReadingSettings()
+    var availableVoices by mutableStateOf<List<DchVoiceOption>>(emptyList())
+        private set
     private var activeUtteranceId = ""
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -43,7 +53,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
             return
         }
 
-        val languageResult = engine?.setLanguage(Locale.getDefault())
+        val languageResult = engine?.setLanguage(Locale.ENGLISH)
 
         if (
             languageResult == null ||
@@ -56,6 +66,8 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         }
 
         ready = true
+        refreshAvailableVoices()
+        applyVoiceSettings()
         status = "Ready"
 
         engine?.setOnUtteranceProgressListener(
@@ -121,6 +133,58 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         if (pendingPlay) {
             pendingPlay = false
             speakCurrentPart()
+        }
+    }
+
+    fun applySettings(settings: DchReadingSettings) {
+        readingSettings = settings
+        if (ready) applyVoiceSettings()
+    }
+
+    private fun refreshAvailableVoices() {
+        val voices = engine?.voices.orEmpty()
+            .filter { it.locale.language == "en" }
+            .sortedWith(
+                compareBy<Voice> { it.isNetworkConnectionRequired }
+                    .thenBy { it.locale.displayName }
+                    .thenBy { it.name }
+            )
+
+        availableVoices = voices.map { voice ->
+            DchVoiceOption(
+                name = voice.name,
+                label = "${voice.locale.displayName} • ${voice.name}",
+                locale = voice.locale.toLanguageTag()
+            )
+        }
+    }
+
+    private fun applyVoiceSettings() {
+        val tts = engine ?: return
+
+        tts.setSpeechRate(readingSettings.speechRate)
+        tts.setPitch(readingSettings.speechPitch)
+
+        val selectedVoice = tts.voices.orEmpty().firstOrNull {
+            it.name == readingSettings.voiceName &&
+                it.locale.language == "en"
+        }
+
+        if (selectedVoice != null) {
+            tts.voice = selectedVoice
+        } else {
+            val englishVoice = tts.voices.orEmpty()
+                .firstOrNull {
+                    it.locale.language == "en" &&
+                        !it.isNetworkConnectionRequired
+                }
+                ?: tts.voices.orEmpty().firstOrNull {
+                    it.locale.language == "en"
+                }
+
+            if (englishVoice != null) {
+                tts.voice = englishVoice
+            }
         }
     }
 
