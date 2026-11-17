@@ -30,7 +30,8 @@ data class ScanSession(
     val status: String = "pending",
     val updatedAt: Long = 0L,
     val answerStatus: String = "",
-    val answerAttemptAt: Long = 0L
+    val answerAttemptAt: Long = 0L,
+    val questionTextForSpeech: String = ""
 ) {
     val pageCount: Int
         get() = pagePaths.size
@@ -373,7 +374,8 @@ class SessionRepository(context: Context) {
         reconstructedText: String,
         approvedText: String,
         answerText: String,
-        model: String
+        model: String,
+        questionTextForSpeech: String? = null
     ): Boolean {
         val session = getSession(id) ?: return false
 
@@ -383,6 +385,8 @@ class SessionRepository(context: Context) {
                     reconstructedText = reconstructedText,
                     approvedText = approvedText,
                     answerText = answerText,
+                    questionTextForSpeech = questionTextForSpeech
+                        ?: session.questionTextForSpeech,
                     model = model,
                     status = if (answerText.isNotBlank()) "answered"
                         else if (approvedText.isNotBlank()) "approved"
@@ -458,6 +462,7 @@ class SessionRepository(context: Context) {
             put("updatedAt", session.updatedAt)
             put("answerStatus", session.answerStatus)
             put("answerAttemptAt", session.answerAttemptAt)
+            put("questionTextForSpeech", session.questionTextForSpeech)
             put("pagePaths", JSONArray(session.pagePaths))
             put("pageResults", JSONArray().apply {
                 session.pageResults.forEach { page ->
@@ -529,7 +534,8 @@ class SessionRepository(context: Context) {
                 json.optLong("createdAt", 0L)
             ),
             answerStatus = json.optString("answerStatus", ""),
-            answerAttemptAt = json.optLong("answerAttemptAt", 0L)
+            answerAttemptAt = json.optLong("answerAttemptAt", 0L),
+            questionTextForSpeech = json.optString("questionTextForSpeech", "")
         )
     }
 }

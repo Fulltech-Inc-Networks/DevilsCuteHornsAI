@@ -9,7 +9,10 @@ data class DchReadingSettings(
     val fontSize: Float = 16f,
     val paragraphSpacing: Float = 18f,
     val includeQuestionHeadings: Boolean = false,
-    val cleanFormatting: Boolean = true
+    val cleanFormatting: Boolean = true,
+    val repeatQuestionThreeTimes: Boolean = true,
+    val repeatAnswerThreeTimes: Boolean = true,
+    val bluetoothEarbudsOnly: Boolean = false
 )
 
 class DchReadingSettingsStore(context: Context) {
@@ -28,13 +31,16 @@ class DchReadingSettingsStore(context: Context) {
                 "include_question_headings",
                 false
             ),
-            cleanFormatting = preferences.getBoolean("clean_formatting", true)
+            cleanFormatting = preferences.getBoolean("clean_formatting", true),
+            repeatQuestionThreeTimes = preferences.getBoolean("repeat_question_three_times", true),
+            repeatAnswerThreeTimes = preferences.getBoolean("repeat_answer_three_times", true),
+            bluetoothEarbudsOnly = preferences.getBoolean("bluetooth_earbuds_only", false)
         )
     }
 
     fun save(settings: DchReadingSettings) {
         preferences.edit()
-            .putFloat("speech_rate", settings.speechRate.coerceIn(0.65f, 1.2f))
+            .putFloat("speech_rate", settings.speechRate.coerceIn(0.25f, 1.2f))
             .putFloat("speech_pitch", settings.speechPitch.coerceIn(0.8f, 1.2f))
             .putString("voice_name", settings.voiceName)
             .putFloat("font_size", settings.fontSize.coerceIn(13f, 24f))
@@ -47,6 +53,9 @@ class DchReadingSettingsStore(context: Context) {
                 settings.includeQuestionHeadings
             )
             .putBoolean("clean_formatting", settings.cleanFormatting)
+            .putBoolean("repeat_question_three_times", settings.repeatQuestionThreeTimes)
+            .putBoolean("repeat_answer_three_times", settings.repeatAnswerThreeTimes)
+            .putBoolean("bluetooth_earbuds_only", settings.bluetoothEarbudsOnly)
             .apply()
     }
 }

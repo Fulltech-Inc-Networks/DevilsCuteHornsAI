@@ -1,6 +1,9 @@
 package com.fulltech.devilscutehornsai
 
 import android.content.Context
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -36,15 +39,50 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
     private var ready = false
     private var pendingPlay = false
     private var paused = false
-    private var parts = emptyList<String>()
+    private data class SpeechPart(
+        val text: String,
+        val repeatCount: Int
+    )
+
+    private var parts = emptyList<SpeechPart>()
+    private var currentRepeat = 1
     private var readingSettings = DchReadingSettings()
     var availableVoices by mutableStateOf<List<DchVoiceOption>>(emptyList())
         private set
     private var activeUtteranceId = ""
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val appContext = context.applicationContext
+    private val audioManager = appContext.getSystemService(
+        Context.AUDIO_SERVICE
+    ) as AudioManager
+
+    private var bluetoothOutputAvailable = false
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(
+            addedDevices: Array<out AudioDeviceInfo>
+        ) {
+            mainHandler.post {
+                refreshBluetoothOutputAvailability()
+            }
+        }
+
+        override fun onAudioDevicesRemoved(
+            removedDevices: Array<out AudioDeviceInfo>
+        ) {
+            mainHandler.post {
+                refreshBluetoothOutputAvailability()
+            }
+        }
+    }
 
     init {
-        engine = TextToSpeech(context.applicationContext, this)
+        audioManager.registerAudioDeviceCallback(
+            audioDeviceCallback,
+            mainHandler
+        )
+        refreshBluetoothOutputAvailability()
+        engine = TextToSpeech(appContext, this)
     }
 
     override fun onInit(result: Int) {
@@ -69,6 +107,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         refreshAvailableVoices()
         applyVoiceSettings()
         status = "Ready"
+        refreshBluetoothOutputAvailability()
 
         engine?.setOnUtteranceProgressListener(
             object : UtteranceProgressListener() {
@@ -87,16 +126,25 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
                     mainHandler.post {
                         if (id == activeUtteranceId) {
                             activeUtteranceId = ""
-                            if (currentPart < parts.size) {
-                                currentPart++
-                            }
 
                             if (currentPart < parts.size) {
-                                speakCurrentPart()
-                            } else {
-                                isPlaying = false
-                                paused = false
-                                status = "Finished"
+                                val part = parts[currentPart]
+
+                                if (currentRepeat < part.repeatCount) {
+                                    currentRepeat++
+                                    speakCurrentPart()
+                                } else {
+                                    currentRepeat = 1
+                                    currentPart++
+
+                                    if (currentPart < parts.size) {
+                                        speakCurrentPart()
+                                    } else {
+                                        isPlaying = false
+                                        paused = false
+                                        status = "Finished"
+                                    }
+                                }
                             }
                         }
                     }
@@ -138,7 +186,49 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
 
     fun applySettings(settings: DchReadingSettings) {
         readingSettings = settings
+        refreshBluetoothOutputAvailability()
         if (ready) applyVoiceSettings()
+    }
+
+    private fun hasBluetoothAudioOutput(): Boolean {
+        val bluetoothTypes = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_HEARING_AID,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER
+        )
+
+        return audioManager
+            .getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .any { it.isSink && it.type in bluetoothTypes }
+    }
+
+    private fun refreshBluetoothOutputAvailability() {
+        bluetoothOutputAvailable = hasBluetoothAudioOutput()
+
+        if (
+            readingSettings.bluetoothEarbudsOnly &&
+            !bluetoothOutputAvailable
+        ) {
+            if (activeUtteranceId.isNotEmpty() || isPlaying) {
+                activeUtteranceId = ""
+                engine?.stop()
+                pendingPlay = false
+                paused = true
+                isPlaying = false
+            }
+
+            status = "Bluetooth earbuds disconnected. Playback paused."
+        } else if (
+            status == "Bluetooth earbuds disconnected. Playback paused."
+        ) {
+            status = if (parts.isEmpty()) {
+                "No answer available to read."
+            } else {
+                "Ready"
+            }
+        }
     }
 
     private fun refreshAvailableVoices() {
@@ -195,8 +285,48 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         paused = false
         isPlaying = false
 
-        parts = splitText(text)
+        parts = splitText(text).map {
+            SpeechPart(it, 1)
+        }
         currentPart = 0
+        currentRepeat = 1
+        totalParts = parts.size
+
+        status = if (parts.isEmpty()) {
+            "No answer available to read."
+        } else {
+            "Ready"
+        }
+    }
+
+    fun setContent(
+        questionText: String,
+        answerText: String,
+        includeQuestions: Boolean,
+        repeatQuestions: Boolean,
+        repeatAnswers: Boolean
+    ) {
+        activeUtteranceId = ""
+        engine?.stop()
+        pendingPlay = false
+        paused = false
+        isPlaying = false
+
+        val questionParts = if (includeQuestions) {
+            splitText(questionText).map {
+                SpeechPart(it, if (repeatQuestions) 3 else 1)
+            }
+        } else {
+            emptyList()
+        }
+
+        val answerParts = splitText(answerText).map {
+            SpeechPart(it, if (repeatAnswers) 3 else 1)
+        }
+
+        parts = questionParts + answerParts
+        currentPart = 0
+        currentRepeat = 1
         totalParts = parts.size
 
         status = if (parts.isEmpty()) {
@@ -215,6 +345,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
 
         if (currentPart >= parts.size) {
             currentPart = 0
+            currentRepeat = 1
         }
 
         if (!ready) {
@@ -247,6 +378,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
 
         if (currentPart >= parts.size) {
             currentPart = 0
+            currentRepeat = 1
         }
 
         paused = false
@@ -257,6 +389,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         if (parts.isEmpty()) return
 
         currentPart = 0
+        currentRepeat = 1
         paused = false
 
         if (!ready) {
@@ -275,6 +408,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         pendingPlay = false
         paused = false
         isPlaying = false
+        currentRepeat = 1
 
         if (currentPart < parts.lastIndex) {
             currentPart++
@@ -296,6 +430,17 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
     private fun speakCurrentPart() {
         if (!ready || parts.isEmpty()) return
 
+        if (
+            readingSettings.bluetoothEarbudsOnly &&
+            !hasBluetoothAudioOutput()
+        ) {
+            pendingPlay = false
+            paused = true
+            isPlaying = false
+            status = "Connect Bluetooth earbuds before playing."
+            return
+        }
+
         if (currentPart >= parts.size) {
             isPlaying = false
             status = "Finished"
@@ -308,7 +453,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
         status = "Starting playback..."
 
         val result = engine?.speak(
-            parts[currentPart],
+            parts[currentPart].text,
             TextToSpeech.QUEUE_FLUSH,
             null,
             utteranceId
@@ -377,6 +522,7 @@ class DchVoiceEngine(context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun shutdown() {
+        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         pendingPlay = false
         activeUtteranceId = ""
         isPlaying = false

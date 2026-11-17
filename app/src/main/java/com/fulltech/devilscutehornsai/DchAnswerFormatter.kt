@@ -2,6 +2,48 @@ package com.fulltech.devilscutehornsai
 
 object DchAnswerFormatter {
 
+    data class StructuredAnswer(
+        val questionText: String,
+        val answerText: String
+    )
+
+    fun parseStructuredResponse(text: String): StructuredAnswer {
+        val questionStart = "[[DCH_SELECTED_QUESTIONS]]"
+        val questionEnd = "[[/DCH_SELECTED_QUESTIONS]]"
+        val answerStart = "[[DCH_ANSWERS]]"
+        val answerEnd = "[[/DCH_ANSWERS]]"
+
+        val qStart = text.indexOf(questionStart)
+        val qEnd = text.indexOf(questionEnd)
+        val aStart = text.indexOf(answerStart)
+        val aEnd = text.indexOf(answerEnd)
+
+        if (qStart < 0 || qEnd <= qStart ||
+            aStart < 0 || aEnd <= aStart ||
+            aStart < qEnd
+        ) {
+            return StructuredAnswer("", text.trim())
+        }
+
+        val questions = text.substring(
+            qStart + questionStart.length,
+            qEnd
+        ).trim()
+
+        val answers = text.substring(
+            aStart + answerStart.length,
+            aEnd
+        ).trim()
+
+        if (answers.isBlank()) {
+            return StructuredAnswer("", text.trim())
+        }
+
+        return StructuredAnswer(questions, answers)
+    }
+
+
+
     fun formatForDisplay(
         text: String,
         cleanFormatting: Boolean = true

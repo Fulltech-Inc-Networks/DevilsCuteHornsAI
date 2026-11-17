@@ -384,7 +384,7 @@ class DchProcessingWorker(
                 withContext(Dispatchers.IO) {
                     GatewayClient.answer(
                         questionText = completeText,
-                        instruction = "Carefully interpret and obey every instruction printed on the paper, including compulsory sections, answer-count limits, alternatives, subquestions, marks and word limits. If choices are allowed, select exactly the required number of permitted questions, prioritizing compulsory questions and then the easiest and quickest valid choices. Do not answer unselected optional questions. Produce the requested answers only: do not copy the full question paper, repeat long question statements, restate examination instructions, or add an introduction or conclusion. Identify each selected answer with its original question number and, only when useful, a short topic heading. Give complete, accurate explanations and show all necessary calculation steps. Use clear plain text with concise headings, meaningful numbering and blank lines between answers. Avoid Markdown decoration such as bold markers, hash-heading symbols, and horizontal divider lines. Preserve mathematical notation, units, equations, diagrams described in words, and important technical symbols. Never sacrifice working or essential details merely to shorten an answer.",
+                        instruction = "Carefully interpret and obey every instruction printed on the paper, including compulsory sections, answer-count limits, alternatives, subquestions, marks and word limits. If choices are allowed, select exactly the required number of permitted questions, prioritizing compulsory questions and then the easiest and quickest valid choices. Do not answer unselected optional questions. Return exactly two sections using these exact markers: [[DCH_SELECTED_QUESTIONS]] followed by the complete text of only the selected question statements, preserving their original question numbers and necessary subquestion labels, then [[/DCH_SELECTED_QUESTIONS]], followed by [[DCH_ANSWERS]], then the complete answers to those selected questions in matching order, followed by [[/DCH_ANSWERS]]. Do not include the full paper, unselected questions, examination instructions, an introduction or a conclusion. Give complete, accurate explanations and show all necessary calculation steps. Use clear plain text, meaningful numbering and blank lines between answers. Avoid Markdown decoration such as bold markers, hash-heading symbols, and horizontal divider lines. Preserve mathematical notation, units, equations, diagrams described in words, and important technical symbols. Never sacrifice working or essential details merely to shorten an answer.",
                         token = token
                     )
                 }
@@ -443,13 +443,17 @@ class DchProcessingWorker(
                 return failure("The AI returned an empty answer.")
             }
 
+            val structuredAnswer =
+                DchAnswerFormatter.parseStructuredResponse(answer.text)
+
             val saved = withContext(Dispatchers.IO) {
                 repository.updateAiResults(
                     id = sessionId,
                     reconstructedText = completeText,
                     approvedText = completeText,
-                    answerText = answer.text,
-                    model = answer.model
+                    answerText = structuredAnswer.answerText,
+                    model = answer.model,
+                    questionTextForSpeech = structuredAnswer.questionText
                 )
             }
 

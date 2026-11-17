@@ -965,7 +965,7 @@ private fun ReadingSettingsScreen(
             onValueChange = {
                 settings = settings.copy(speechRate = it)
             },
-            valueRange = 0.65f..1.2f
+            valueRange = 0.25f..1.2f
         )
         Text(
             "Slower speech is easier to follow. Default: 0.82.",
@@ -1090,6 +1090,106 @@ private fun ReadingSettingsScreen(
                 }
             )
         }
+
+        HorizontalDivider(color = AppMuted.copy(alpha = 0.25f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Repeat each question three times", color = Color.White)
+                Text(
+                    "Repeat selected question statements during playback.",
+                    color = AppMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+            Switch(
+                checked = settings.repeatQuestionThreeTimes,
+                onCheckedChange = {
+                    settings = settings.copy(repeatQuestionThreeTimes = it)
+                }
+            )
+        }
+
+        HorizontalDivider(color = AppMuted.copy(alpha = 0.25f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Repeat each answer three times", color = Color.White)
+                Text(
+                    "Repeat every answer part three times for easier listening.",
+                    color = AppMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+            Switch(
+                checked = settings.repeatAnswerThreeTimes,
+                onCheckedChange = {
+                    settings = settings.copy(repeatAnswerThreeTimes = it)
+                }
+            )
+        }
+
+        HorizontalDivider(color = AppMuted.copy(alpha = 0.25f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Bluetooth audio only", color = Color.White)
+                Text(
+                    "Pause speech when Bluetooth audio disconnects. "
+                        + "Requires a connected Bluetooth audio device.",
+                    color = AppMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+
+            Switch(
+                checked = settings.bluetoothEarbudsOnly,
+                onCheckedChange = {
+                    settings = settings.copy(bluetoothEarbudsOnly = it)
+                }
+            )
+        }
+
+        OutlinedButton(
+            onClick = {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_BLUETOOTH_SETTINGS
+                        )
+                    )
+                } catch (_: android.content.ActivityNotFoundException) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Bluetooth settings are unavailable.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("OPEN BLUETOOTH PAIRING", color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedButton(
             onClick = {
@@ -1523,13 +1623,24 @@ private fun SessionDetailScreen(
         voiceEngine.applySettings(readingSettings)
     }
 
-    LaunchedEffect(session?.answerText, readingSettings) {
-        voiceEngine.setText(
-            DchAnswerFormatter.formatForSpeech(
+    LaunchedEffect(
+        session?.questionTextForSpeech,
+        session?.answerText,
+        readingSettings
+    ) {
+        voiceEngine.setContent(
+            questionText = DchAnswerFormatter.formatForSpeech(
+                session?.questionTextForSpeech.orEmpty(),
+                includeQuestionHeadings = true,
+                cleanFormatting = readingSettings.cleanFormatting
+            ),
+            answerText = DchAnswerFormatter.formatForDisplay(
                 session?.answerText.orEmpty(),
-                readingSettings.includeQuestionHeadings,
                 readingSettings.cleanFormatting
-            )
+            ),
+            includeQuestions = readingSettings.includeQuestionHeadings,
+            repeatQuestions = readingSettings.repeatQuestionThreeTimes,
+            repeatAnswers = readingSettings.repeatAnswerThreeTimes
         )
     }
 

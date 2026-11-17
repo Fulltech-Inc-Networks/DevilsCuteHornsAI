@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -349,6 +350,23 @@ private fun PhotoReviewScreen(
     onAddPage: () -> Unit,
     onFinish: () -> Unit
 ) {
+    var secondsRemaining by remember(file) { mutableIntStateOf(5) }
+    var timerCancelled by remember(file) { mutableStateOf(false) }
+    var submitted by remember(file) { mutableStateOf(false) }
+
+    LaunchedEffect(file) {
+        for (second in 5 downTo 1) {
+            if (timerCancelled || submitted) return@LaunchedEffect
+            secondsRemaining = second
+            delay(1000)
+        }
+
+        if (!timerCancelled && !submitted) {
+            submitted = true
+            onFinish()
+        }
+    }
+
     val bitmap = remember(file) {
         decodePreviewBitmap(file)
     }
@@ -367,7 +385,15 @@ private fun PhotoReviewScreen(
             letterSpacing = 2.sp
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Submitting automatically in $secondsRemaining seconds",
+            color = Color.White,
+            fontSize = 14.sp
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
 
         if (bitmap != null) {
             Image(
@@ -391,7 +417,7 @@ private fun PhotoReviewScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         OutlinedButton(
-            onClick = onRetake,
+            onClick = { timerCancelled = true; onRetake() },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
@@ -406,7 +432,7 @@ private fun PhotoReviewScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             OutlinedButton(
-                onClick = onAddPage,
+                onClick = { timerCancelled = true; onAddPage() },
                 modifier = Modifier
                     .weight(1f)
                     .height(54.dp)
@@ -415,7 +441,13 @@ private fun PhotoReviewScreen(
             }
 
             Button(
-                onClick = onFinish,
+                onClick = {
+                    if (!submitted) {
+                        timerCancelled = true
+                        submitted = true
+                        onFinish()
+                    }
+                },
                 modifier = Modifier
                     .weight(1f)
                     .height(54.dp),
@@ -423,7 +455,7 @@ private fun PhotoReviewScreen(
                     containerColor = CameraRed
                 )
             ) {
-                Text("FINISH SCAN", color = Color.White)
+                Text("SUBMIT NOW", color = Color.White)
             }
         }
     }
