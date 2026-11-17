@@ -1100,19 +1100,30 @@ private fun SessionDetailScreen(
     var message by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(sessionId) {
-        session = withContext(Dispatchers.IO) {
-            repository.getSession(sessionId)
-        }
+        var initialLoad = true
 
-        paperText = session?.let {
-            if (it.reconstructedText.isNotBlank()) {
-                it.reconstructedText
-            } else {
-                it.extractedText
+        while (true) {
+            val latest = withContext(Dispatchers.IO) {
+                repository.getSession(sessionId)
             }
-        }.orEmpty()
 
-        loading = false
+            session = latest
+
+            if (initialLoad) {
+                paperText = latest?.let {
+                    if (it.reconstructedText.isNotBlank()) {
+                        it.reconstructedText
+                    } else {
+                        it.extractedText
+                    }
+                }.orEmpty()
+
+                loading = false
+                initialLoad = false
+            }
+
+            delay(1500)
+        }
     }
 
     LaunchedEffect(session?.answerText) {
