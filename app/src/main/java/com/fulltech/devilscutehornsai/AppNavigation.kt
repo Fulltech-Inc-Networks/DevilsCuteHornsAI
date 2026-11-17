@@ -1104,6 +1104,7 @@ private fun ReadingSettingsScreen(
     }
 }
 
+@Composable
 private fun OcrReviewScreen(
     sessionId: String,
     repository: SessionRepository,
