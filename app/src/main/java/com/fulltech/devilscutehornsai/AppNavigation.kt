@@ -1,10 +1,17 @@
 package com.fulltech.devilscutehornsai
 
+import androidx.activity.compose.BackHandler
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,10 +57,42 @@ fun DchApp() {
         SessionRepository(context.applicationContext)
     }
 
-    var route by remember { mutableStateOf("home") }
+    val backStack = remember { mutableStateListOf("home") }
+    val route = backStack.last()
     var pages by remember { mutableStateOf<List<File>>(emptyList()) }
     var activeSessionId by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    fun navigate(destination: String) {
+        if (backStack.lastOrNull() != destination) {
+            backStack.add(destination)
+        }
+    }
+
+    fun goBack() {
+        if (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
+        }
+    }
+
+    fun resetToHistoryDetail(id: String) {
+        activeSessionId = id
+        backStack.clear()
+        backStack.addAll(listOf("home", "history", "detail"))
+    }
+
+    BackHandler(enabled = backStack.size > 1) {
+        goBack()
+    }
+
+    LaunchedEffect(route, activeSessionId) {
+        if (
+            (route == "camera" || route == "review" || route == "detail") &&
+            activeSessionId == null
+        ) {
+            goBack()
+        }
+    }
 
     fun openCameraWithDraft() {
         scope.launch {
@@ -62,7 +101,7 @@ fun DchApp() {
                     repository.createDraftSession()
                 }
                 activeSessionId = draft.id
-                route = "camera"
+                navigate("camera")
             } catch (error: Exception) {
                 Toast.makeText(
                     context,
@@ -95,13 +134,13 @@ fun DchApp() {
                 CameraScreen(
                     sessionId = draftId,
                     repository = repository,
-                    onBack = { route = "home" },
+                    onBack = { goBack() },
                     onFinished = { id ->
                         val session = repository.getSession(id)
                         if (session != null && session.pagePaths.isNotEmpty()) {
                             activeSessionId = id
                             pages = session.pagePaths.map(::File)
-                            route = "review"
+                            navigate("review")
                         } else {
                             Toast.makeText(
                                 context,
@@ -111,8 +150,6 @@ fun DchApp() {
                         }
                     }
                 )
-            } else {
-                route = "home"
             }
         }
 
@@ -124,37 +161,35 @@ fun DchApp() {
                     repository = repository,
                     onSaved = {
                         pages = emptyList()
-                        route = "detail"
+                        resetToHistoryDetail(reviewId)
                     }
                 )
-            } else {
-                route = "history"
             }
         }
 
         "settings" -> {
             SettingsHubScreen(
-                onBack = { route = "home" },
-                onReadingSettings = { route = "reading_settings" },
-                onGatewaySettings = { route = "gateway_settings" }
+                onBack = { goBack() },
+                onReadingSettings = { navigate("reading_settings") },
+                onGatewaySettings = { navigate("gateway_settings") }
             )
         }
 
         "reading_settings" -> {
-            ReadingSettingsScreen(onBack = { route = "settings" })
+            ReadingSettingsScreen(onBack = { goBack() })
         }
 
         "gateway_settings" -> {
-            GatewaySettingsScreen(onBack = { route = "settings" })
+            GatewaySettingsScreen(onBack = { goBack() })
         }
 
         "history" -> {
             SessionHistoryScreen(
                 repository = repository,
-                onBack = { route = "home" },
+                onBack = { goBack() },
                 onOpen = { session ->
                     activeSessionId = session.id
-                    route = "detail"
+                    navigate("detail")
                 }
             )
         }
@@ -165,16 +200,19 @@ fun DchApp() {
                 SessionDetailScreen(
                     sessionId = id,
                     repository = repository,
-                    onBack = { route = "history" },
-                    onDeleted = { route = "history" }
+                    onBack = { goBack() },
+                    onDeleted = { goBack() }
                 )
-            } else {
-                route = "history"
             }
         }
 
         else -> {
             DashboardScreen(
+                repository = repository,
+                onOpenSession = { session ->
+                    activeSessionId = session.id
+                    navigate("detail")
+                },
                 onCapture = {
                     val granted = ContextCompat.checkSelfPermission(
                         context,
@@ -189,8 +227,8 @@ fun DchApp() {
                         )
                     }
                 },
-                onHistory = { route = "history" },
-                onSettings = { route = "settings" }
+                onHistory = { navigate("history") },
+                onSettings = { navigate("settings") }
             )
         }
     }
@@ -198,138 +236,509 @@ fun DchApp() {
 
 @Composable
 private fun DashboardScreen(
+    repository: SessionRepository,
+    onOpenSession: (ScanSession) -> Unit,
     onCapture: () -> Unit,
     onHistory: () -> Unit,
     onSettings: () -> Unit
 ) {
+    var recentSessions by remember {
+        mutableStateOf<List<ScanSession>>(emptyList())
+    }
+    var recentSessionsLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(repository) {
+        recentSessions = withContext(Dispatchers.IO) {
+            repository.getSessions().take(3)
+        }
+        recentSessionsLoading = false
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = AppBlack
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF200B12),
+                            Color(0xFF100B0E),
+                            AppBlack
+                        )
+                    )
+                )
         ) {
-            Spacer(modifier = Modifier.height(65.dp))
-
-            Text("😈", fontSize = 64.sp)
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                "DEVIL'S",
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 6.sp
-            )
-
-            Text(
-                "CUTE HORNS AI",
-                color = AppRed,
-                fontSize = 27.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                "Cute Interface. Unholy Intelligence.",
-                color = AppMuted,
-                fontSize = 12.sp
-            )
-
-            Spacer(modifier = Modifier.height(55.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = AppSurface
-                ),
-                shape = RoundedCornerShape(20.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
-                Column(modifier = Modifier.padding(22.dp)) {
-                    Text(
-                        "DOCUMENT INTELLIGENCE",
-                        color = AppRed,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        "Your personal AI assistant.",
-                        color = Color.White,
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        "Scan multiple pages, extract text offline, " +
-                            "correct recognition mistakes and save your sessions.",
-                        color = AppMuted,
-                        fontSize = 13.sp,
-                        lineHeight = 21.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Button(
-                        onClick = onCapture,
+                // APP HEADER
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.dch_logo),
+                        contentDescription = "DCH AI logo",
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(54.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AppRed
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(13.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "START SCANNING",
-                            fontWeight = FontWeight.Bold,
+                            "DEVIL'S CUTE HORNS AI",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                        Text(
+                            "YOUR INTELLIGENT STUDY SPACE",
+                            color = AppMuted,
+                            fontSize = 8.sp,
                             letterSpacing = 1.sp
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
 
-                    OutlinedButton(
-                        onClick = onHistory,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
+                }
+
+                Spacer(modifier = Modifier.height(30.dp))
+
+                // WELCOME
+                Text(
+                    "WELCOME BACK",
+                    color = Color(0xFFFF647E),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp
+                )
+
+                Spacer(modifier = Modifier.height(7.dp))
+
+                Text(
+                    "What are we\nlearning today?",
+                    color = Color.White,
+                    fontSize = 29.sp,
+                    lineHeight = 35.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+
+                Spacer(modifier = Modifier.height(9.dp))
+
+                Text(
+                    "Turn your documents into knowledge with AI.",
+                    color = Color(0xFFB7ADB1),
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+
+                Spacer(modifier = Modifier.height(25.dp))
+
+                // PRIMARY ACTION
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(23.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF24151B)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp)
                     ) {
-                        Text("SCAN HISTORY", color = Color.White)
-                    }
+                        Text(
+                            "YOUR AI STUDY ASSISTANT",
+                            color = Color(0xFFFF7189),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp
+                        )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedButton(
-                        onClick = onSettings,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Text("SETTINGS", color = Color.White)
+                        Text(
+                            "Start a new session",
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+
+                        Spacer(modifier = Modifier.height(7.dp))
+
+                        Text(
+                            "Capture question papers, notes or study material. " +
+                                "Let AI understand the content and prepare your answers.",
+                            color = Color(0xFFC1B4B9),
+                            fontSize = 12.sp,
+                            lineHeight = 19.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = onCapture,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(55.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AppRed
+                            ),
+                            shape = RoundedCornerShape(15.dp)
+                        ) {
+                            Text(
+                                "＋   START NEW SESSION",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.6.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            "MULTI-PAGE CAPTURE  •  AI ANALYSIS  •  AUDIO",
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF9B858D),
+                            fontSize = 8.sp,
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 0.5.sp
+                        )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(27.dp))
+
+                // QUICK ACCESS
+                Text(
+                    "QUICK ACCESS",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                )
+
+                Spacer(modifier = Modifier.height(13.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(112.dp)
+                            .clickable(onClick = onHistory),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF191518)
+                        ),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(15.dp),
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                "◷",
+                                color = Color(0xFFFF647E),
+                                fontSize = 25.sp
+                            )
+                            Spacer(modifier = Modifier.height(7.dp))
+                            Text(
+                                "History",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Previous sessions",
+                                color = AppMuted,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(112.dp)
+                            .clickable(onClick = onSettings),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF191518)
+                        ),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(15.dp),
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                "⚙",
+                                color = Color(0xFFFF647E),
+                                fontSize = 25.sp
+                            )
+                            Spacer(modifier = Modifier.height(7.dp))
+                            Text(
+                                "Settings",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Personalize your app",
+                                color = AppMuted,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(27.dp))
+
+                // REAL RECENT SESSIONS
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "RECENT SESSIONS",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    )
+
+                    if (recentSessions.isNotEmpty()) {
+                        TextButton(
+                            onClick = onHistory,
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                "VIEW ALL",
+                                color = Color(0xFFFF7189),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                when {
+                    recentSessionsLoading -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 22.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = AppRed,
+                                modifier = Modifier.size(25.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    }
+
+                    recentSessions.isEmpty() -> {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF191518)
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(17.dp)
+                            ) {
+                                Text(
+                                    "Your study space starts here",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(5.dp))
+                                Text(
+                                    "You haven't saved any sessions yet. " +
+                                        "Start a new session to scan your first document.",
+                                    color = AppMuted,
+                                    fontSize = 11.sp,
+                                    lineHeight = 17.sp
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                TextButton(
+                                    onClick = onCapture,
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text(
+                                        "START YOUR FIRST SESSION  →",
+                                        color = Color(0xFFFF7189),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            recentSessions.forEach { session ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onOpenSession(session)
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = Color(0xFF191518)
+                                    ),
+                                    shape = RoundedCornerShape(15.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(15.dp)
+                                    ) {
+                                        Text(
+                                            DateFormat.getDateTimeInstance().format(
+                                                Date(session.createdAt)
+                                            ),
+                                            color = Color(0xFFFF7189),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+
+                                        Text(
+                                            "${session.pageCount} " +
+                                                if (session.pageCount == 1) {
+                                                    "page"
+                                                } else {
+                                                    "pages"
+                                                },
+                                            color = Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+
+                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                        Text(
+                                            session.extractedText
+                                                .take(110)
+                                                .ifBlank {
+                                                    "No text preview available."
+                                                },
+                                            color = AppMuted,
+                                            fontSize = 11.sp,
+                                            lineHeight = 16.sp
+                                        )
+
+                                        Spacer(modifier = Modifier.height(7.dp))
+
+                                        Text(
+                                            "OPEN SESSION  →",
+                                            color = Color(0xFFFF7189),
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(25.dp))
+
+                // HOW IT WORKS
+                Text(
+                    "HOW IT WORKS",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                listOf(
+                    Triple("01", "Capture", "Scan your study material"),
+                    Triple("02", "Understand", "AI processes the content"),
+                    Triple("03", "Listen", "Listen to your answers")
+                ).forEach { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = Color(0xFF35141F),
+                            shape = RoundedCornerShape(11.dp)
+                        ) {
+                            Text(
+                                item.first,
+                                modifier = Modifier.padding(
+                                    horizontal = 13.dp,
+                                    vertical = 11.dp
+                                ),
+                                color = Color(0xFFFF7189),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(13.dp))
+
+                        Column {
+                            Text(
+                                item.second,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                item.third,
+                                color = AppMuted,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(25.dp))
+
+                Text(
+                    "DEVIL'S CUTE HORNS AI",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF665B60),
+                    fontSize = 9.sp,
+                    textAlign = TextAlign.Center,
+                    letterSpacing = 1.5.sp
+                )
+
+                Spacer(modifier = Modifier.height(15.dp))
             }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            Text(
-                "DCH AI  •  VERSION 1.0.0",
-                color = Color.DarkGray,
-                fontSize = 10.sp,
-                letterSpacing = 2.sp
-            )
         }
     }
 }

@@ -8,7 +8,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -88,7 +91,12 @@ fun HomeScreen(
         ) {
             Spacer(modifier = Modifier.height(65.dp))
 
-            Text(text = "😈", fontSize = 64.sp)
+            Image(
+                painter = painterResource(R.drawable.dch_logo),
+                contentDescription = "Devil's Cute Horns AI logo",
+                modifier = Modifier.size(76.dp),
+                contentScale = ContentScale.Fit
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
