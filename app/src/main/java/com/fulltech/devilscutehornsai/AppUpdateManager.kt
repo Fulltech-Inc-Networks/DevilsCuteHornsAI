@@ -24,6 +24,11 @@ data class AppUpdate(
     val downloadUrl: String
 )
 
+enum class UpdateInstallResult {
+    PERMISSION_REQUIRED,
+    INSTALLATION_SUBMITTED
+}
+
 object AppUpdateManager {
 
     private const val PACKAGE_NAME =
@@ -85,7 +90,24 @@ object AppUpdateManager {
     suspend fun downloadAndInstall(
         context: Context,
         update: AppUpdate
-    ) = withContext(Dispatchers.IO) {
+    ): UpdateInstallResult = withContext(Dispatchers.IO) {
+
+        check(!UpdateInstallState.isPending(context)) {
+            "An installation is already awaiting Android confirmation."
+        }
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            val settingsIntent = Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            context.startActivity(settingsIntent)
+            return@withContext UpdateInstallResult.PERMISSION_REQUIRED
+        }
 
         val directory = File(context.cacheDir, "updates")
 
@@ -109,22 +131,6 @@ object AppUpdateManager {
         }
 
         verifyApk(context, apk, update.versionCode)
-
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !context.packageManager.canRequestPackageInstalls()
-        ) {
-            val settingsIntent = Intent(
-                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}")
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-            context.startActivity(settingsIntent)
-
-            throw IllegalStateException(
-                "Allow DCH AI to install updates, then check for updates again."
-            )
-        }
 
         val installer = context.packageManager.packageInstaller
 
@@ -160,12 +166,37 @@ object AppUpdateManager {
                         PendingIntent.FLAG_MUTABLE
                 )
 
+                check(
+                    UpdateInstallState.save(
+                        context,
+                        "Waiting for Android installation confirmation.",
+                        false,
+                        true,
+                        sessionId,
+                        update.versionCode
+                    )
+                ) {
+                    "Unable to persist the installation session."
+                }
+
                 session.commit(callback.intentSender)
             }
         } catch (error: Exception) {
             runCatching { installer.abandonSession(sessionId) }
+
+            UpdateInstallState.save(
+                context,
+                "Unable to submit the update: ${
+                    error.localizedMessage ?: "Unknown installation error."
+                }",
+                false,
+                false
+            )
+
             throw error
         }
+
+        UpdateInstallResult.INSTALLATION_SUBMITTED
     }
 
     private fun verifyApk(
@@ -273,28 +304,69 @@ object AppUpdateManager {
     }
 
     private fun downloadFile(address: String, destination: File) {
-        val connection = URL(address).openConnection()
-            as HttpURLConnection
+        val temporary = File(destination.parentFile, destination.name + ".part")
+        if (temporary.exists() && !temporary.delete()) {
+            throw IllegalStateException("Unable to clear the previous partial download.")
+        }
+
+        val connection = URL(address).openConnection() as HttpURLConnection
 
         try {
             connection.connectTimeout = 15000
             connection.readTimeout = 60000
+            connection.instanceFollowRedirects = true
+            connection.useCaches = false
             connection.setRequestProperty(
                 "User-Agent",
                 "DCH-AI-Android-Updater"
             )
 
-            if (connection.responseCode !in 200..299) {
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                throw IllegalStateException("APK download failed: HTTP $status")
+            }
+
+            val expectedLength = connection.contentLengthLong
+            var downloaded = 0L
+
+            connection.inputStream.use { input ->
+                java.io.FileOutputStream(temporary).use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        downloaded += count
+                    }
+                    output.fd.sync()
+                }
+            }
+
+            if (downloaded <= 0L ||
+                (expectedLength > 0L && downloaded != expectedLength)
+            ) {
                 throw IllegalStateException(
-                    "APK download failed: HTTP ${connection.responseCode}"
+                    "APK download was incomplete. Please try again."
                 )
             }
 
-            connection.inputStream.use { input ->
-                destination.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+            try {
+                java.nio.file.Files.move(
+                    temporary.toPath(),
+                    destination.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(
+                    temporary.toPath(),
+                    destination.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
             }
+        } catch (error: Exception) {
+            temporary.delete()
+            throw error
         } finally {
             connection.disconnect()
         }

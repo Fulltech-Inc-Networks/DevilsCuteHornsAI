@@ -171,7 +171,8 @@ fun DchApp() {
             SettingsHubScreen(
                 onBack = { goBack() },
                 onReadingSettings = { navigate("reading_settings") },
-                onGatewaySettings = { navigate("gateway_settings") }
+                onGatewaySettings = { navigate("gateway_settings") },
+                onDeviceConnect = { navigate("device_connect") }
             )
         }
 
@@ -181,6 +182,10 @@ fun DchApp() {
 
         "gateway_settings" -> {
             GatewaySettingsScreen(onBack = { goBack() })
+        }
+
+        "device_connect" -> {
+            DeviceConnectScreen(onBack = { goBack() })
         }
 
         "history" -> {
@@ -763,9 +768,36 @@ private fun GatewaySettingsScreen(
 
     var updateChecking by remember { mutableStateOf(false) }
     var updateInstalling by remember { mutableStateOf(false) }
+    var updatePending by remember {
+        mutableStateOf(UpdateInstallState.isPending(context))
+    }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
-    var updateSuccess by remember { mutableStateOf(false) }
+    var updateStatus by remember {
+        mutableStateOf(UpdateInstallState.message(context))
+    }
+    var updateSuccess by remember {
+        mutableStateOf(UpdateInstallState.isSuccess(context))
+    }
+
+    DisposableEffect(context) {
+        val preferences = context.getSharedPreferences(
+            "dch_update_install",
+            android.content.Context.MODE_PRIVATE
+        )
+
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener {
+                prefs, _ ->
+            updateStatus = prefs.getString("message", null)
+            updateSuccess = prefs.getBoolean("success", false)
+            updatePending = prefs.getBoolean("pending", false)
+        }
+
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+
+        onDispose {
+            preferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -988,6 +1020,7 @@ private fun GatewaySettingsScreen(
                             scope.launch {
                                 updateChecking = true
                                 updateStatus = null
+                                updateSuccess = false
                                 availableUpdate = null
 
                                 try {
@@ -1013,7 +1046,7 @@ private fun GatewaySettingsScreen(
                                 }
                             }
                         },
-                        enabled = !updateChecking && !updateInstalling,
+                        enabled = !updateChecking && !updateInstalling && !updatePending,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
@@ -1051,26 +1084,60 @@ private fun GatewaySettingsScreen(
                                     updateSuccess = false
 
                                     try {
-                                        withContext(Dispatchers.IO) {
+                                        val result = withContext(Dispatchers.IO) {
                                             AppUpdateManager.downloadAndInstall(
                                                 context.applicationContext,
                                                 selectedUpdate
                                             )
                                         }
 
-                                        updateStatus =
-                                            "Verified APK submitted to Android installer."
-                                        updateSuccess = true
+                                        when (result) {
+                                            UpdateInstallResult.PERMISSION_REQUIRED -> {
+                                                updateStatus =
+                                                    "Allow DCH AI to install unknown apps in Android settings. Return here and tap DOWNLOAD AND INSTALL again."
+                                                updateSuccess = false
+                                                UpdateInstallState.save(
+                                                    context,
+                                                    updateStatus!!,
+                                                    false
+                                                )
+                                            }
+
+                                            UpdateInstallResult.INSTALLATION_SUBMITTED -> {
+                                                updateStatus =
+                                                    UpdateInstallState.message(context)
+                                                        ?: "Verified APK submitted. Waiting for Android installation confirmation."
+                                                updateSuccess =
+                                                    UpdateInstallState.isSuccess(context)
+
+                                                if (UpdateInstallState.message(context) == null) {
+                                                    UpdateInstallState.save(
+                                                        context,
+                                                        updateStatus!!,
+                                                        false
+                                                    )
+                                                }
+                                            }
+                                        }
                                     } catch (error: Exception) {
                                         updateStatus = error.localizedMessage
                                             ?: "Unable to install the update."
                                         updateSuccess = false
+                                        val installationStillPending =
+                                            UpdateInstallState.isPending(context)
+
+                                        UpdateInstallState.save(
+                                            context,
+                                            updateStatus!!,
+                                            false,
+                                            installationStillPending
+                                        )
                                     } finally {
                                         updateInstalling = false
                                     }
                                 }
                             },
-                            enabled = !updateChecking && !updateInstalling,
+                            enabled = !updateChecking && !updateInstalling && !updatePending,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(50.dp),
@@ -1144,7 +1211,8 @@ private fun GatewaySettingsScreen(
 private fun SettingsHubScreen(
     onBack: () -> Unit,
     onReadingSettings: () -> Unit,
-    onGatewaySettings: () -> Unit
+    onGatewaySettings: () -> Unit,
+    onDeviceConnect: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1195,6 +1263,38 @@ private fun SettingsHubScreen(
                 )
                 Text(
                     "CONFIGURE  ›",
+                    color = AppRed,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onDeviceConnect),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AppSurface)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    "Device Connect",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Pair devices and receive completed answers securely.",
+                    color = AppMuted,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.padding(top = 7.dp)
+                )
+                Text(
+                    "OPEN  ›",
                     color = AppRed,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 16.dp)

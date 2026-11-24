@@ -12,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -36,6 +37,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent { DevilTheme { DchApp() } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        UpdateInstallState.recover(applicationContext)
     }
 
     override fun onKeyDown(
@@ -79,6 +85,15 @@ fun HomeScreen(
     photoReady: Boolean,
     onCapture: () -> Unit
 ) {
+    val context = LocalContext.current
+    val appVersion = remember(context) {
+        runCatching {
+            context.packageManager
+                .getPackageInfo(context.packageName, 0)
+                .versionName
+        }.getOrNull() ?: "Unknown"
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = Background
@@ -188,7 +203,7 @@ fun HomeScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             Text(
-                text = "DCH AI  •  VERSION 1.0.0",
+                text = "DCH AI  •  VERSION $appVersion",
                 color = Color.DarkGray,
                 fontSize = 10.sp,
                 letterSpacing = 2.sp

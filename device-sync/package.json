@@ -1,0 +1,17 @@
+{
+  "name": "dch-device-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply dch-device-sync --local",
+    "db:remote": "wrangler d1 migrations apply dch-device-sync --remote",
+    "typecheck": "node --check src/index.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

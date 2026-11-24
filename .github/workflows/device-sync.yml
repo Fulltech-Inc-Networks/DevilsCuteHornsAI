@@ -1,0 +1,43 @@
+name: Device Sync Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "device-sync/**"
+      - ".github/workflows/device-sync.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "device-sync/**"
+      - ".github/workflows/device-sync.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Device Sync
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: device-sync
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: device-sync/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run typecheck
+
+      - name: Validate Wrangler configuration
+        run: npx wrangler types
