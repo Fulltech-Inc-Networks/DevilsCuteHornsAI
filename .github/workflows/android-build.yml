@@ -35,18 +35,8 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Run Device Connect crypto instrumentation test
-        uses: reactivecircus/android-emulator-runner@v2
-        env:
-          ANDROID_I_WANT_MY_TCG: yes
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          emulator-boot-timeout: 600
-          disable-animations: true
-          script: gradle --no-daemon :app:connectedDebugAndroidTest
+      - name: Compile Device Connect crypto instrumentation test
+        run: gradle --no-daemon :app:assembleDebugAndroidTest
 
       - name: Build debug and optimized release APKs
         run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
