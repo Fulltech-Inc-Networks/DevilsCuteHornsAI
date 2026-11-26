@@ -102,6 +102,9 @@ object DeviceConnectTransferCrypto {
 
             val plaintext = answerJson.toString().toByteArray(Charsets.UTF_8)
             val ciphertext = payloadCipher.doFinal(plaintext)
+            require(ciphertext.size <= 1_800_000) {
+                "Encrypted payload exceeds the Device Sync storage limit."
+            }
 
             val wrappingKey = hkdf(
                 sharedSecret,
@@ -155,7 +158,7 @@ object DeviceConnectTransferCrypto {
     ): JSONObject {
 
         val ciphertext = decodeBase64(payloadBase64)
-        require(ciphertext.isNotEmpty() && ciphertext.size <= 2_097_152) {
+        require(ciphertext.isNotEmpty() && ciphertext.size <= 1_800_000) {
             "Encrypted answer size is invalid."
         }
 

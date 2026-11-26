@@ -106,6 +106,14 @@ class DeviceConnectKeyStore(context: Context) {
     }
 
     @Synchronized
+    fun createEphemeralPublicKey(): String {
+        val generator = KeyPairGenerator.getInstance("EC")
+        generator.initialize(ECGenParameterSpec(CURVE))
+        val pair = generator.generateKeyPair()
+        return encodeBase64(encodeRawPublicKey(pair.public as ECPublicKey))
+    }
+
+    @Synchronized
     fun deriveSharedSecret(peerPublicKeyBase64: String): ByteArray {
         val peerBytes = decodeBase64(peerPublicKeyBase64)
 

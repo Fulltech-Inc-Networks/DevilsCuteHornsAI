@@ -55,8 +55,12 @@ class ReceivedAnswerRepository(context: Context) {
             val existing = read(destination)
             require(
                 existing.transferId == answer.transferId &&
+                existing.senderDeviceId == answer.senderDeviceId &&
+                existing.senderDeviceName == answer.senderDeviceName &&
+                existing.questionText == answer.questionText &&
                 existing.answerText == answer.answerText &&
-                existing.questionText == answer.questionText
+                existing.model == answer.model &&
+                existing.completedAt == answer.completedAt
             ) {
                 "Transfer ID already exists with different content."
             }
@@ -178,8 +182,10 @@ class ReceivedAnswerRepository(context: Context) {
         )
 
         require(isValidId(answer.transferId))
+        require(answer.senderDeviceId.isNotBlank())
         require(answer.questionText.isNotBlank())
         require(answer.answerText.isNotBlank())
+        require(answer.completedAt > 0L)
         require(answer.transferId == file.nameWithoutExtension)
 
         return answer

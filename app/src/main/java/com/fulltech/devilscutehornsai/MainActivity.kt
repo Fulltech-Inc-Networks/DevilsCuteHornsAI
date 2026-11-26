@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        DeviceConnectSyncScheduler.ensureReceiverScheduled(applicationContext)
+
         setContent { DevilTheme { DchApp() } }
     }
 

@@ -92,6 +92,10 @@ class DchProcessingWorker(
             }
 
             if (session.answerText.isNotBlank()) {
+                DeviceConnectSyncScheduler.enqueueSender(
+                    applicationContext,
+                    sessionId
+                )
                 return Result.success()
             }
 
@@ -469,6 +473,12 @@ class DchProcessingWorker(
                         "Check the session before requesting them again."
                 )
             }
+
+            // Sync only after the completed answer has been saved locally.
+            DeviceConnectSyncScheduler.enqueueSender(
+                applicationContext,
+                sessionId
+            )
 
             setProgress(
                 workDataOf(
