@@ -350,20 +350,41 @@ object AppUpdateManager {
                 )
             }
 
-            try {
-                java.nio.file.Files.move(
-                    temporary.toPath(),
-                    destination.toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
-                )
-            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-                java.nio.file.Files.move(
-                    temporary.toPath(),
-                    destination.toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            if (destination.exists() && !destination.delete()) {
+                throw IllegalStateException(
+                    "Unable to replace the previous APK file."
                 )
             }
+
+            if (!temporary.renameTo(destination)) {
+                try {
+                    temporary.inputStream().use { input ->
+                        java.io.FileOutputStream(destination).use { output ->
+                            input.copyTo(output)
+                            output.fd.sync()
+                        }
+                    }
+
+                    if (destination.length() != downloaded) {
+                        throw IllegalStateException(
+                            "APK file could not be finalized correctly."
+                        )
+                    }
+                } catch (error: Exception) {
+                    destination.delete()
+                    throw error
+                }
+
+                temporary.delete()
+            }
+
+            if (!destination.isFile || destination.length() != downloaded) {
+                destination.delete()
+                throw IllegalStateException(
+                    "Final APK file is missing or incomplete."
+                )
+            }
+
         } catch (error: Exception) {
             temporary.delete()
             throw error
