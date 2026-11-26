@@ -329,7 +329,7 @@ private fun DashboardScreen(
                 Text(
                     "WELCOME BACK",
                     color = Color(0xFFFF647E),
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 2.sp
                 )
@@ -754,7 +754,7 @@ private fun DashboardScreen(
                     ) {
                         BloodDripText(
                             text = "The Future is Here",
-                            fontSize = 21.sp,
+                            fontSize = 24.sp,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             dripPoints = listOf(
                                 0.19f to 0.88f,
@@ -830,12 +830,12 @@ private fun BloodDripText(
                     color = blood,
                     start = Offset(x, startY),
                     end = Offset(x, endY),
-                    strokeWidth = if (index % 2 == 0) 2.8f else 1.9f
+                    strokeWidth = if (index % 2 == 0) 3.2f else 2.4f
                 )
 
                 drawCircle(
                     color = blood,
-                    radius = if (index % 2 == 0) 2.5f else 1.8f,
+                    radius = if (index % 2 == 0) 3f else 2.2f,
                     center = Offset(x, endY)
                 )
 
