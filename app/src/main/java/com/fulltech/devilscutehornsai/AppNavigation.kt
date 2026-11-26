@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
@@ -28,9 +29,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -733,16 +739,111 @@ private fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(25.dp))
 
-                Text(
-                    "DEVIL'S CUTE HORNS AI",
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // SIGNATURE FOOTER
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFF665B60),
-                    fontSize = 9.sp,
-                    textAlign = TextAlign.Center,
-                    letterSpacing = 1.5.sp
-                )
+                    color = Color.Black
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 22.dp, horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        BloodDripText(
+                            text = "The Future is Here",
+                            fontSize = 21.sp,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            dripPoints = listOf(
+                                0.19f to 0.88f,
+                                0.37f to 0.72f,
+                                0.57f to 0.96f,
+                                0.78f to 0.80f
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(5.dp))
+
+                        BloodDripText(
+                            text = "AI created by Someone who would like to stay Anonymous",
+                            fontSize = 10.sp,
+                            modifier = Modifier.fillMaxWidth().height(35.dp),
+                            dripPoints = listOf(
+                                0.16f to 0.84f,
+                                0.43f to 0.72f,
+                                0.69f to 0.94f,
+                                0.87f to 0.78f
+                            )
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(15.dp))
+            }
+        }
+    }
+}
+
+
+
+@Composable
+private fun BloodDripText(
+    text: String,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    modifier: Modifier = Modifier,
+    dripPoints: List<Pair<Float, Float>>
+) {
+    val blood = Color(0xFF8B0000)
+    val highlight = Color(0xFFFF263F)
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = blood,
+            fontSize = fontSize,
+            fontFamily = FontFamily.Cursive,
+            fontStyle = FontStyle.Italic,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            lineHeight = fontSize * 1.25f,
+            style = TextStyle(
+                shadow = Shadow(
+                    color = Color(0xFF65000B),
+                    offset = Offset(0f, 1.5f),
+                    blurRadius = 7f
+                )
+            )
+        )
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            dripPoints.forEachIndexed { index, point ->
+                val x = size.width * point.first
+                val startY = size.height * 0.62f
+                val endY = size.height * point.second
+
+                drawLine(
+                    color = blood,
+                    start = Offset(x, startY),
+                    end = Offset(x, endY),
+                    strokeWidth = if (index % 2 == 0) 2.8f else 1.9f
+                )
+
+                drawCircle(
+                    color = blood,
+                    radius = if (index % 2 == 0) 2.5f else 1.8f,
+                    center = Offset(x, endY)
+                )
+
+                drawCircle(
+                    color = highlight.copy(alpha = 0.65f),
+                    radius = 0.8f,
+                    center = Offset(x - 0.7f, startY + 2f)
+                )
             }
         }
     }
