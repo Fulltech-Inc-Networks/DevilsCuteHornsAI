@@ -8,20 +8,16 @@
     "enabled": true
   },
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": [
+      "*/15 * * * *"
+    ]
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "dch-device-sync",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "b40ce5b6-cdb4-4b6b-b2f3-e09c00f1bc5b",
       "migrations_dir": "migrations"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "PAYLOADS",
-      "bucket_name": "dch-device-sync-payloads"
     }
   ]
 }

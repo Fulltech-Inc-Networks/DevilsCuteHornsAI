@@ -241,10 +241,19 @@ class PairingMockD1 {
               sessionId,
               invitationHash,
               expiresAt,
-              now
+              now,
+              activeRecipientId
             ] = params;
 
+            if (this.beforeClaimUpdate) {
+              this.beforeClaimUpdate();
+              this.beforeClaimUpdate = null;
+            }
+
             const session = this.sessions.get(sessionId);
+            const recipient = this.devices.find(
+              device => device.id === activeRecipientId
+            );
             const initiator = session && this.devices.find(
               device => device.id === session.initiator_device_id
             );
@@ -253,6 +262,8 @@ class PairingMockD1 {
               !session ||
               !initiator ||
               initiator.revoked_at !== null ||
+              !recipient ||
+              recipient.revoked_at !== null ||
               session.invitation_hash !== invitationHash ||
               session.expires_at !== expiresAt ||
               session.expires_at <= now ||
@@ -560,6 +571,30 @@ test("recipient claims an invitation with its registered signing key", async () 
 
   // A claim does not activate a device pair.
   assert.equal(stored.confirmed_at, undefined);
+});
+
+test("rejects a claim if the recipient is revoked before the database update", async () => {
+  const setup = await setupClaim();
+
+  setup.env.DB.beforeClaimUpdate = () => {
+    const recipient = setup.env.DB.devices.find(
+      device => device.id === recipientId
+    );
+    recipient.revoked_at = Date.now();
+  };
+
+  const response = await worker.fetch(setup.request, setup.env);
+  const data = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(
+    data.error,
+    "Pairing invitation was already claimed or expired."
+  );
+
+  const stored = setup.env.DB.sessions.get(setup.invitation.sessionId);
+  assert.equal(stored.claimed_at, null);
+  assert.equal(stored.consumed_at, null);
 });
 
 test("rejects a pairing claim with an invalid signature", async () => {

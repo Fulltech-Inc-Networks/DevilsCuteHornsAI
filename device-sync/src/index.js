@@ -1,4 +1,4 @@
-const MAX_CIPHERTEXT_BYTES = 2 * 1024 * 1024;
+const MAX_CIPHERTEXT_BYTES = 1_800_000;
 const MAX_TRANSFER_AGE_MS = 48 * 60 * 60 * 1000;
 
 const JSON_HEADERS = {
@@ -736,6 +736,12 @@ async function handleClaimPairing(request, env, recipient, sessionId) {
           WHERE devices.id = pairing_sessions.initiator_device_id
             AND devices.revoked_at IS NULL
         )
+        AND EXISTS (
+          SELECT 1
+          FROM devices
+          WHERE devices.id = ?
+            AND devices.revoked_at IS NULL
+        )
     `).bind(
       claimedAt,
       recipient.id,
@@ -745,7 +751,8 @@ async function handleClaimPairing(request, env, recipient, sessionId) {
       sessionId,
       invitationHash,
       session.expires_at,
-      claimedAt
+      claimedAt,
+      recipient.id
     ).run();
 
     if ((result.meta?.changes || 0) !== 1) {
@@ -1056,6 +1063,142 @@ async function handleConfirmPairing(request, env, initiator, sessionId) {
   });
 }
 
+async function handleRevokePairing(env, device, otherDeviceId) {
+  if (!otherDeviceId || otherDeviceId === device.id) {
+    return error("Invalid paired device.", 400);
+  }
+
+  const deviceA = device.id < otherDeviceId ? device.id : otherDeviceId;
+  const deviceB = device.id < otherDeviceId ? otherDeviceId : device.id;
+  const revokedAt = Date.now();
+
+  try {
+    const results = await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE device_pairs
+        SET revoked_at = ?
+        WHERE device_a_id = ?
+          AND device_b_id = ?
+          AND revoked_at IS NULL
+      `).bind(revokedAt, deviceA, deviceB),
+
+      env.DB.prepare(`
+        UPDATE transfers
+        SET status = 'expired',
+            expires_at = ?
+        WHERE status = 'pending'
+          AND (
+            (sender_device_id = ? AND recipient_device_id = ?)
+            OR
+            (sender_device_id = ? AND recipient_device_id = ?)
+          )
+      `).bind(
+        revokedAt,
+        device.id,
+        otherDeviceId,
+        otherDeviceId,
+        device.id
+      ),
+
+      env.DB.prepare(`
+        UPDATE transfer_batch_recipients
+        SET status = 'expired'
+        WHERE status = 'pending'
+          AND (
+            (
+              recipient_device_id = ?
+              AND batch_id IN (
+                SELECT id FROM transfer_batches
+                WHERE sender_device_id = ?
+              )
+            )
+            OR
+            (
+              recipient_device_id = ?
+              AND batch_id IN (
+                SELECT id FROM transfer_batches
+                WHERE sender_device_id = ?
+              )
+            )
+          )
+      `).bind(
+        otherDeviceId,
+        device.id,
+        device.id,
+        otherDeviceId
+      )
+    ]);
+
+    if ((results[0]?.meta?.changes || 0) !== 1) {
+      return error("Active pairing not found.", 404);
+    }
+  } catch (err) {
+    console.error("Pairing revocation failed:", err);
+    return error("Pairing could not be revoked.", 503);
+  }
+
+  return response({
+    state: "revoked",
+    deviceId: otherDeviceId,
+    revokedAt
+  });
+}
+
+async function handleRevokeCurrentDevice(env, device) {
+  const revokedAt = Date.now();
+
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE device_pairs
+        SET revoked_at = ?
+        WHERE revoked_at IS NULL
+          AND (device_a_id = ? OR device_b_id = ?)
+      `).bind(revokedAt, device.id, device.id),
+
+      env.DB.prepare(`
+        UPDATE transfers
+        SET status = 'expired',
+            expires_at = ?
+        WHERE status = 'pending'
+          AND (
+            sender_device_id = ?
+            OR recipient_device_id = ?
+          )
+      `).bind(revokedAt, device.id, device.id),
+
+      env.DB.prepare(`
+        UPDATE transfer_batch_recipients
+        SET status = 'expired'
+        WHERE status = 'pending'
+          AND (
+            recipient_device_id = ?
+            OR batch_id IN (
+              SELECT id FROM transfer_batches
+              WHERE sender_device_id = ?
+            )
+          )
+      `).bind(device.id, device.id),
+
+      env.DB.prepare(`
+        UPDATE devices
+        SET revoked_at = ?
+        WHERE id = ?
+          AND revoked_at IS NULL
+      `).bind(revokedAt, device.id)
+    ]);
+  } catch (err) {
+    console.error("Device revocation failed:", err);
+    return error("Device could not be revoked.", 503);
+  }
+
+  return response({
+    state: "revoked",
+    deviceId: device.id,
+    revokedAt
+  });
+}
+
 async function authenticate(request, env) {
   const header = request.headers.get("Authorization") || "";
   const match = header.match(/^Bearer ([A-Za-z0-9_-]{40,200})$/);
@@ -1084,6 +1227,44 @@ async function authenticate(request, env) {
 }
 
 
+async function handleListPairings(env, device) {
+  const result = await env.DB.prepare(`
+    SELECT
+      p.id AS pairingId,
+      p.created_at AS pairedAt,
+      d.id AS deviceId,
+      d.name AS deviceName
+    FROM device_pairs p
+    JOIN devices d
+      ON d.id = CASE
+        WHEN p.device_a_id = ? THEN p.device_b_id
+        ELSE p.device_a_id
+      END
+    JOIN devices own
+      ON own.id = ?
+    WHERE (p.device_a_id = ? OR p.device_b_id = ?)
+      AND p.revoked_at IS NULL
+      AND d.revoked_at IS NULL
+      AND own.revoked_at IS NULL
+    ORDER BY p.created_at DESC
+    LIMIT 100
+  `).bind(
+    device.id,
+    device.id,
+    device.id,
+    device.id
+  ).all();
+
+  return response({
+    pairings: (result.results || []).map(row => ({
+      pairingId: row.pairingId,
+      deviceId: row.deviceId,
+      deviceName: row.deviceName || "Paired device",
+      pairedAt: row.pairedAt
+    }))
+  });
+}
+
 async function areDevicesPaired(env, firstDeviceId, secondDeviceId) {
   const deviceA = firstDeviceId < secondDeviceId
     ? firstDeviceId
@@ -1107,13 +1288,101 @@ async function areDevicesPaired(env, firstDeviceId, secondDeviceId) {
 
 
 async function handleCreateBatch(request, env, sender) {
-  // Discover every actively paired, non-revoked recipient.
+  const MAX_REQUEST_BYTES = 4096;
+  const declaredLength = Number(request.headers.get("Content-Length") || 0);
+
+  if (declaredLength > MAX_REQUEST_BYTES) {
+    return error("Request is too large.", 413);
+  }
+
+  let body;
+  try {
+    if (!request.body) return error("Invalid JSON body.");
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength > MAX_REQUEST_BYTES) {
+      return error("Request is too large.", 413);
+    }
+    body = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return error("Invalid JSON body.");
+  }
+
+  const batchId = body?.batchId;
+  if (!isUuid(batchId)) return error("Invalid batch ID.");
+
+  const now = Date.now();
+
+  async function readExistingBatch() {
+    const batch = await env.DB.prepare(`
+      SELECT id, sender_device_id, expected_recipients,
+             created_at, expires_at, status, completed_at
+      FROM transfer_batches
+      WHERE id = ?
+      LIMIT 1
+    `).bind(batchId).first();
+
+    if (!batch) return null;
+
+    if (batch.sender_device_id !== sender.id) {
+      return { conflict: error("Batch ID belongs to another device.", 409) };
+    }
+
+    if (batch.expires_at <= now || batch.status === "expired") {
+      return { conflict: error("Transfer batch has expired.", 409) };
+    }
+
+    const roster = await env.DB.prepare(`
+      SELECT r.recipient_device_id, r.status, r.transfer_id,
+             d.name, d.public_key, d.key_algorithm, d.revoked_at,
+             CASE
+               WHEN p.id IS NOT NULL AND p.revoked_at IS NULL
+               THEN 1 ELSE 0
+             END AS pair_active
+      FROM transfer_batch_recipients r
+      LEFT JOIN devices d ON d.id = r.recipient_device_id
+      LEFT JOIN device_pairs p
+        ON (
+          (p.device_a_id = ? AND p.device_b_id = r.recipient_device_id)
+          OR
+          (p.device_a_id = r.recipient_device_id AND p.device_b_id = ?)
+        )
+      WHERE r.batch_id = ?
+      ORDER BY r.recipient_device_id
+    `).bind(sender.id, sender.id, batchId).all();
+
+    return {
+      batch,
+      recipients: (roster.results || []).map(row => {
+        const active = row.revoked_at == null && row.pair_active === 1;
+        return {
+          deviceId: row.recipient_device_id,
+          deviceName: row.name || "Paired device",
+          publicKey: active ? row.public_key : null,
+          keyAlgorithm: active ? row.key_algorithm : null,
+          active,
+          transferId: row.transfer_id,
+          status: row.status
+        };
+      })
+    };
+  }
+
+  const existing = await readExistingBatch();
+  if (existing?.conflict) return existing.conflict;
+
+  if (existing) {
+    return response({
+      batchId,
+      recipients: existing.recipients,
+      status: existing.batch.status,
+      createdAt: existing.batch.created_at,
+      expiresAt: existing.batch.expires_at,
+      completedAt: existing.batch.completed_at ?? null
+    });
+  }
+
   const result = await env.DB.prepare(`
-    SELECT
-      d.id,
-      d.name,
-      d.public_key,
-      d.key_algorithm
+    SELECT d.id, d.name, d.public_key, d.key_algorithm
     FROM device_pairs p
     JOIN devices d
       ON d.id = CASE
@@ -1140,10 +1409,7 @@ async function handleCreateBatch(request, env, sender) {
     );
   }
 
-  const now = Date.now();
-  const batchId = crypto.randomUUID();
   const expiresAt = now + MAX_TRANSFER_AGE_MS;
-
   const statements = [
     env.DB.prepare(`
       INSERT INTO transfer_batches (
@@ -1164,6 +1430,21 @@ async function handleCreateBatch(request, env, sender) {
   try {
     await env.DB.batch(statements);
   } catch (err) {
+    const recovered = await readExistingBatch();
+
+    if (recovered?.conflict) return recovered.conflict;
+
+    if (recovered) {
+      return response({
+        batchId,
+        recipients: recovered.recipients,
+        status: recovered.batch.status,
+        createdAt: recovered.batch.created_at,
+        expiresAt: recovered.batch.expires_at,
+        completedAt: recovered.batch.completed_at ?? null
+      });
+    }
+
     console.error("Automatic transfer batch creation failed:", err);
     return error("Transfer batch could not be created.", 409);
   }
@@ -1174,25 +1455,60 @@ async function handleCreateBatch(request, env, sender) {
       deviceId: recipient.id,
       deviceName: recipient.name,
       publicKey: recipient.public_key,
-      keyAlgorithm: recipient.key_algorithm
+      keyAlgorithm: recipient.key_algorithm,
+      active: true,
+      transferId: null,
+      status: "pending"
     })),
     status: "pending",
     createdAt: now,
-    expiresAt
+    expiresAt,
+    completedAt: null
   }, 201);
 }
 
 async function handleUpload(request, env, sender) {
+  const MAX_REQUEST_BYTES = 3_000_000;
   const declaredLength = Number(request.headers.get("Content-Length") || 0);
 
-  if (declaredLength > 3_000_000) {
+  if (declaredLength > MAX_REQUEST_BYTES) {
     return error("Request is too large.", 413);
   }
 
   let body;
 
   try {
-    body = await request.json();
+    if (!request.body) {
+      return error("Invalid JSON body.");
+    }
+
+    const reader = request.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.byteLength;
+
+      if (totalBytes > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        return error("Request is too large.", 413);
+      }
+
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    body = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return error("Invalid JSON body.");
   }
@@ -1303,30 +1619,64 @@ async function handleUpload(request, env, sender) {
     LIMIT 1
   `).bind(batchId, recipientDeviceId).first();
 
-  if (!rosterEntry || rosterEntry.status !== "pending" || rosterEntry.transfer_id) {
-    return error("Recipient is not available for this batch or already has an upload.", 409);
+  if (!rosterEntry) {
+    return error("Recipient is not part of this batch.", 409);
+  }
+
+  // An identical retry returns the existing transfer instead of duplicating it.
+  if (rosterEntry.transfer_id) {
+    const existing = await env.DB.prepare(`
+      SELECT id, payload_sha256, status, expires_at
+      FROM transfers
+      WHERE id = ?
+        AND batch_id = ?
+        AND sender_device_id = ?
+        AND recipient_device_id = ?
+      LIMIT 1
+    `).bind(
+      transferId,
+      batchId,
+      sender.id,
+      recipientDeviceId
+    ).first();
+
+    if (
+      rosterEntry.status === "pending" &&
+      rosterEntry.transfer_id === transferId &&
+      existing &&
+      existing.status === "pending" &&
+      existing.payload_sha256 === actualHash
+    ) {
+      return response({
+        batchId,
+        transferId,
+        recipientDeviceId,
+        status: existing.status,
+        expiresAt: existing.expires_at,
+        duplicate: true
+      });
+    }
+
+    return error("Recipient slot already contains a different transfer.", 409);
+  }
+
+  if (rosterEntry.status !== "pending") {
+    return error("Recipient is not available for this batch.", 409);
   }
 
   const expiresAt = batch.expires_at;
-  const objectKey = `${recipientDeviceId}/${crypto.randomUUID()}`;
-
-  await env.PAYLOADS.put(objectKey, ciphertext, {
-    httpMetadata: {
-      contentType: "application/octet-stream",
-      cacheControl: "no-store"
-    }
-  });
+  const objectKey = `d1:${transferId}:${recipientDeviceId}`;
 
   try {
     const results = await env.DB.batch([
       env.DB.prepare(`
         INSERT INTO transfers (
           id, sender_device_id, recipient_device_id,
-          object_key, payload_sha256, ciphertext_size,
+          object_key, payload_sha256, ciphertext_size, ciphertext,
           nonce, ephemeral_public_key, wrapped_key, key_nonce,
           created_at, expires_at, status, batch_id
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?
         WHERE EXISTS (
           SELECT 1
           FROM transfer_batch_recipients
@@ -1335,6 +1685,20 @@ async function handleUpload(request, env, sender) {
             AND status = 'pending'
             AND transfer_id IS NULL
         )
+        AND EXISTS (
+          SELECT 1
+          FROM device_pairs p
+          JOIN devices da ON da.id = p.device_a_id
+          JOIN devices db ON db.id = p.device_b_id
+          WHERE p.revoked_at IS NULL
+            AND da.revoked_at IS NULL
+            AND db.revoked_at IS NULL
+            AND (
+              (p.device_a_id = ? AND p.device_b_id = ?)
+              OR
+              (p.device_a_id = ? AND p.device_b_id = ?)
+            )
+        )
       `).bind(
         transferId,
         sender.id,
@@ -1342,6 +1706,7 @@ async function handleUpload(request, env, sender) {
         objectKey,
         actualHash,
         ciphertext.byteLength,
+        ciphertext,
         nonce,
         ephemeralPublicKey,
         wrappedKey,
@@ -1350,7 +1715,11 @@ async function handleUpload(request, env, sender) {
         expiresAt,
         batchId,
         batchId,
-        recipientDeviceId
+        recipientDeviceId,
+        sender.id,
+        recipientDeviceId,
+        recipientDeviceId,
+        sender.id
       ),
       env.DB.prepare(`
         UPDATE transfer_batch_recipients
@@ -1359,7 +1728,22 @@ async function handleUpload(request, env, sender) {
           AND recipient_device_id = ?
           AND status = 'pending'
           AND transfer_id IS NULL
-      `).bind(transferId, batchId, recipientDeviceId)
+          AND EXISTS (
+            SELECT 1
+            FROM transfers
+            WHERE id = ?
+              AND recipient_device_id = ?
+              AND batch_id = ?
+              AND status = 'pending'
+          )
+      `).bind(
+        transferId,
+        batchId,
+        recipientDeviceId,
+        transferId,
+        recipientDeviceId,
+        batchId
+      )
     ]);
 
     if (
@@ -1371,13 +1755,43 @@ async function handleUpload(request, env, sender) {
         WHERE id = ? AND recipient_device_id = ? AND batch_id = ?
       `).bind(transferId, recipientDeviceId, batchId).run();
 
-      await env.PAYLOADS.delete(objectKey);
       return error("Recipient slot was already used or is no longer available.", 409);
     }
   } catch (err) {
     console.error("Transfer registration failed:", err);
-    await env.PAYLOADS.delete(objectKey);
-    return error("Transfer could not be registered. Check for a duplicate transfer ID.", 409);
+
+    // Handle concurrent identical uploads safely.
+    const existing = await env.DB.prepare(`
+      SELECT id, payload_sha256, status, expires_at
+      FROM transfers
+      WHERE id = ?
+        AND batch_id = ?
+        AND sender_device_id = ?
+        AND recipient_device_id = ?
+      LIMIT 1
+    `).bind(
+      transferId,
+      batchId,
+      sender.id,
+      recipientDeviceId
+    ).first();
+
+    if (
+      existing &&
+      existing.status === "pending" &&
+      existing.payload_sha256 === actualHash
+    ) {
+      return response({
+        batchId,
+        transferId,
+        recipientDeviceId,
+        status: existing.status,
+        expiresAt: existing.expires_at,
+        duplicate: true
+      });
+    }
+
+    return error("Transfer could not be registered or conflicts with an existing transfer.", 409);
   }
 
   return response({
@@ -1389,14 +1803,78 @@ async function handleUpload(request, env, sender) {
   }, 201);
 }
 
+async function handleBatchStatus(env, sender, batchId) {
+  if (!isUuid(batchId)) return error("Invalid batch ID.");
+
+  const batch = await env.DB.prepare(`
+    SELECT id, sender_device_id, expected_recipients,
+           created_at, expires_at, status, completed_at
+    FROM transfer_batches
+    WHERE id = ?
+      AND sender_device_id = ?
+    LIMIT 1
+  `).bind(batchId, sender.id).first();
+
+  if (!batch) return error("Transfer batch not found.", 404);
+
+  const result = await env.DB.prepare(`
+    SELECT r.recipient_device_id,
+           d.name AS recipient_name,
+           r.transfer_id,
+           r.status,
+           r.acknowledged_at,
+           t.expires_at
+    FROM transfer_batch_recipients r
+    LEFT JOIN devices d
+      ON d.id = r.recipient_device_id
+    LEFT JOIN transfers t
+      ON t.id = r.transfer_id
+     AND t.batch_id = r.batch_id
+    WHERE r.batch_id = ?
+    ORDER BY r.created_at ASC, r.recipient_device_id ASC
+  `).bind(batchId).all();
+
+  const recipients = result.results || [];
+  const delivered = recipients.filter(r => r.status === "delivered").length;
+  const pending = recipients.filter(r => r.status === "pending").length;
+  const expired = recipients.filter(r => r.status === "expired").length;
+
+  return response({
+    batchId: batch.id,
+    status: batch.status,
+    expectedRecipients: batch.expected_recipients,
+    createdAt: batch.created_at,
+    expiresAt: batch.expires_at,
+    completedAt: batch.completed_at ?? null,
+    delivery: { delivered, pending, expired },
+    recipients
+  });
+}
+
 async function handleList(request, env, device) {
   const result = await env.DB.prepare(`
-    SELECT id, sender_device_id, created_at, expires_at, ciphertext_size
-    FROM transfers
-    WHERE recipient_device_id = ?
-      AND status = 'pending'
-      AND expires_at > ?
-    ORDER BY created_at ASC
+    SELECT t.id, t.sender_device_id, t.created_at,
+           t.expires_at, t.ciphertext_size
+    FROM transfers t
+    JOIN device_pairs p
+      ON (
+        (p.device_a_id = t.sender_device_id
+         AND p.device_b_id = t.recipient_device_id)
+        OR
+        (p.device_a_id = t.recipient_device_id
+         AND p.device_b_id = t.sender_device_id)
+      )
+    JOIN devices sender
+      ON sender.id = t.sender_device_id
+    JOIN devices recipient
+      ON recipient.id = t.recipient_device_id
+    WHERE t.recipient_device_id = ?
+      AND t.status = 'pending'
+      AND t.expires_at > ?
+      AND p.revoked_at IS NULL
+      AND sender.revoked_at IS NULL
+      AND recipient.revoked_at IS NULL
+    ORDER BY t.created_at ASC
     LIMIT 100
   `).bind(device.id, Date.now()).all();
 
@@ -1407,24 +1885,37 @@ async function handleFetch(env, device, transferId) {
   if (!isUuid(transferId)) return error("Invalid transfer ID.");
 
   const transfer = await env.DB.prepare(`
-    SELECT *
-    FROM transfers
-    WHERE id = ?
-      AND recipient_device_id = ?
-      AND status = 'pending'
-      AND expires_at > ?
+    SELECT t.*
+    FROM transfers t
+    JOIN device_pairs p
+      ON (
+        (p.device_a_id = t.sender_device_id
+         AND p.device_b_id = t.recipient_device_id)
+        OR
+        (p.device_a_id = t.recipient_device_id
+         AND p.device_b_id = t.sender_device_id)
+      )
+    JOIN devices sender
+      ON sender.id = t.sender_device_id
+    JOIN devices recipient
+      ON recipient.id = t.recipient_device_id
+    WHERE t.id = ?
+      AND t.recipient_device_id = ?
+      AND t.status = 'pending'
+      AND t.expires_at > ?
+      AND p.revoked_at IS NULL
+      AND sender.revoked_at IS NULL
+      AND recipient.revoked_at IS NULL
     LIMIT 1
   `).bind(transferId, device.id, Date.now()).first();
 
   if (!transfer) return error("Pending transfer not found.", 404);
 
-  const object = await env.PAYLOADS.get(transfer.object_key);
-
-  if (!object) {
+  if (!transfer.ciphertext) {
     return error("Encrypted payload is temporarily unavailable.", 503);
   }
 
-  const ciphertext = new Uint8Array(await object.arrayBuffer());
+  const ciphertext = new Uint8Array(transfer.ciphertext);
 
   if (ciphertext.byteLength !== transfer.ciphertext_size) {
     return error("Stored payload size verification failed.", 500);
@@ -1456,12 +1947,27 @@ async function handleAcknowledge(env, device, transferId) {
   const now = Date.now();
 
   const transfer = await env.DB.prepare(`
-    SELECT object_key, batch_id
-    FROM transfers
-    WHERE id = ?
-      AND recipient_device_id = ?
-      AND status = 'pending'
-      AND expires_at > ?
+    SELECT t.batch_id
+    FROM transfers t
+    JOIN device_pairs p
+      ON (
+        (p.device_a_id = t.sender_device_id
+         AND p.device_b_id = t.recipient_device_id)
+        OR
+        (p.device_a_id = t.recipient_device_id
+         AND p.device_b_id = t.sender_device_id)
+      )
+    JOIN devices sender
+      ON sender.id = t.sender_device_id
+    JOIN devices recipient
+      ON recipient.id = t.recipient_device_id
+    WHERE t.id = ?
+      AND t.recipient_device_id = ?
+      AND t.status = 'pending'
+      AND t.expires_at > ?
+      AND p.revoked_at IS NULL
+      AND sender.revoked_at IS NULL
+      AND recipient.revoked_at IS NULL
     LIMIT 1
   `).bind(transferId, device.id, now).first();
 
@@ -1502,6 +2008,22 @@ async function handleAcknowledge(env, device, transferId) {
           AND batch_id = ?
           AND status = 'pending'
           AND expires_at > ?
+          AND EXISTS (
+            SELECT 1
+            FROM device_pairs p
+            JOIN devices da ON da.id = p.device_a_id
+            JOIN devices db ON db.id = p.device_b_id
+            WHERE p.revoked_at IS NULL
+              AND da.revoked_at IS NULL
+              AND db.revoked_at IS NULL
+              AND (
+                (p.device_a_id = transfers.sender_device_id
+                 AND p.device_b_id = transfers.recipient_device_id)
+                OR
+                (p.device_a_id = transfers.recipient_device_id
+                 AND p.device_b_id = transfers.sender_device_id)
+              )
+          )
       `).bind(now, transferId, device.id, transfer.batch_id, now),
 
       env.DB.prepare(`
@@ -1570,8 +2092,23 @@ async function handleAcknowledge(env, device, transferId) {
      AND r.recipient_device_id = t.recipient_device_id
     JOIN transfer_batches b
       ON b.id = t.batch_id
+    JOIN device_pairs p
+      ON (
+        (p.device_a_id = t.sender_device_id
+         AND p.device_b_id = t.recipient_device_id)
+        OR
+        (p.device_a_id = t.recipient_device_id
+         AND p.device_b_id = t.sender_device_id)
+      )
+    JOIN devices sender
+      ON sender.id = t.sender_device_id
+    JOIN devices recipient
+      ON recipient.id = t.recipient_device_id
     WHERE t.id = ?
       AND t.recipient_device_id = ?
+      AND p.revoked_at IS NULL
+      AND sender.revoked_at IS NULL
+      AND recipient.revoked_at IS NULL
     LIMIT 1
   `).bind(transferId, device.id).first();
 
@@ -1585,10 +2122,16 @@ async function handleAcknowledge(env, device, transferId) {
   let cleanupPending = false;
 
   try {
-    await env.PAYLOADS.delete(transfer.object_key);
+    await env.DB.prepare(`
+      UPDATE transfers
+      SET ciphertext = NULL
+      WHERE id = ?
+        AND recipient_device_id = ?
+        AND status = 'delivered'
+    `).bind(transferId, device.id).run();
   } catch (err) {
     cleanupPending = true;
-    console.error("Acknowledged payload deletion will be retried:", transfer.object_key, err);
+    console.error("Acknowledged payload cleanup will be retried:", transferId, err);
   }
 
   return response({
@@ -1605,15 +2148,15 @@ async function cleanupExpiredTransfers(env) {
   const now = Date.now();
   const cleanupAfter = now + BATCH_METADATA_GRACE_MS;
 
-  let deletedObjects = 0;
+  let clearedPayloads = 0;
   let failedDeletions = 0;
   let expiredTransfers = 0;
   let removedBatches = 0;
   let removedUnbatchedTransfers = 0;
 
-  // Delete acknowledged payloads and retry expired payload deletions.
+  // Clear acknowledged and expired encrypted payloads from D1.
   const candidates = await env.DB.prepare(`
-    SELECT id, recipient_device_id, object_key, status, batch_id
+    SELECT id, recipient_device_id, status, batch_id
     FROM transfers
     WHERE status = 'delivered'
        OR (
@@ -1626,8 +2169,14 @@ async function cleanupExpiredTransfers(env) {
 
   for (const transfer of candidates.results || []) {
     try {
-      await env.PAYLOADS.delete(transfer.object_key);
-      deletedObjects++;
+      await env.DB.prepare(`
+        UPDATE transfers
+        SET ciphertext = NULL
+        WHERE id = ?
+          AND recipient_device_id = ?
+      `).bind(transfer.id, transfer.recipient_device_id).run();
+
+      clearedPayloads++;
 
       if (transfer.status === "pending") {
         if (transfer.batch_id) {
@@ -1646,7 +2195,6 @@ async function cleanupExpiredTransfers(env) {
               transfer.batch_id,
               now
             ),
-
             env.DB.prepare(`
               UPDATE transfer_batch_recipients
               SET status = 'expired'
@@ -1678,7 +2226,6 @@ async function cleanupExpiredTransfers(env) {
         expiredTransfers++;
       }
 
-      // Old standalone records have no batch metadata to preserve.
       if (!transfer.batch_id) {
         await env.DB.prepare(`
           DELETE FROM transfers
@@ -1694,7 +2241,7 @@ async function cleanupExpiredTransfers(env) {
       }
     } catch (err) {
       failedDeletions++;
-      console.error("Payload cleanup failed:", transfer.object_key, err);
+      console.error("D1 payload cleanup failed:", transfer.id, err);
     }
   }
 
@@ -1718,6 +2265,32 @@ async function cleanupExpiredTransfers(env) {
           AND status != 'delivered'
       )
   `).bind(now, cleanupAfter).run();
+
+  // Close batches early when every recipient is terminal but
+  // at least one recipient expired instead of acknowledging.
+  await env.DB.prepare(`
+    UPDATE transfer_batches
+    SET status = 'expired',
+        cleanup_after = ?
+    WHERE status = 'pending'
+      AND (
+        SELECT COUNT(*)
+        FROM transfer_batch_recipients
+        WHERE batch_id = transfer_batches.id
+      ) = expected_recipients
+      AND NOT EXISTS (
+        SELECT 1
+        FROM transfer_batch_recipients
+        WHERE batch_id = transfer_batches.id
+          AND status = 'pending'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM transfer_batch_recipients
+        WHERE batch_id = transfer_batches.id
+          AND status = 'expired'
+      )
+  `).bind(now).run();
 
   // Expire remaining recipients and batches at the shared 48-hour deadline.
   const expiredBatches = await env.DB.prepare(`
@@ -1793,28 +2366,6 @@ async function cleanupExpiredTransfers(env) {
   `).bind(now).all();
 
   for (const batch of oldBatches.results || []) {
-    const deliveries = await env.DB.prepare(`
-      SELECT object_key
-      FROM transfers
-      WHERE batch_id = ?
-    `).bind(batch.id).all();
-
-    let batchSafeToDelete = true;
-
-    for (const delivery of deliveries.results || []) {
-      try {
-        await env.PAYLOADS.delete(delivery.object_key);
-        deletedObjects++;
-      } catch (err) {
-        batchSafeToDelete = false;
-        failedDeletions++;
-        console.error("Batch payload cleanup failed:", delivery.object_key, err);
-        break;
-      }
-    }
-
-    if (!batchSafeToDelete) continue;
-
     try {
       await env.DB.batch([
         env.DB.prepare(`
@@ -1837,7 +2388,7 @@ async function cleanupExpiredTransfers(env) {
   }
 
   console.log("Device Sync cleanup:", JSON.stringify({
-    deletedObjects,
+    clearedPayloads,
     failedDeletions,
     expiredTransfers,
     removedBatches,
@@ -1847,7 +2398,11 @@ async function cleanupExpiredTransfers(env) {
 
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(cleanupExpiredTransfers(env));
+    ctx.waitUntil(
+      cleanupExpiredTransfers(env).catch(err => {
+        console.error("Scheduled Device Sync cleanup failed:", err);
+      })
+    );
   },
 
   async fetch(request, env) {
@@ -1882,6 +2437,25 @@ export default {
 
     if (!device) {
       return error("Device authentication required.", 401);
+    }
+
+    if (
+      request.method === "POST" &&
+      path === "/v1/devices/revoke"
+    ) {
+      return handleRevokeCurrentDevice(env, device);
+    }
+
+    const pairingRevokeMatch = path.match(
+      /^\/v1\/pairings\/([^/]+)\/revoke$/
+    );
+
+    if (pairingRevokeMatch && request.method === "POST") {
+      return handleRevokePairing(env, device, pairingRevokeMatch[1]);
+    }
+
+    if (request.method === "GET" && path === "/v1/pairings") {
+      return handleListPairings(env, device);
     }
 
     if (request.method === "POST" && path === "/v1/pairings") {
@@ -1924,6 +2498,14 @@ export default {
 
     if (request.method === "POST" && path === "/v1/transfer-batches") {
       return handleCreateBatch(request, env, device);
+    }
+
+    const batchStatusMatch = path.match(
+      /^\/v1\/transfer-batches\/([0-9a-f-]+)\/status$/i
+    );
+
+    if (batchStatusMatch && request.method === "GET") {
+      return handleBatchStatus(env, device, batchStatusMatch[1]);
     }
 
     if (request.method === "POST" && path === "/v1/transfers") {
