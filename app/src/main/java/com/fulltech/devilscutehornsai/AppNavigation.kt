@@ -754,8 +754,8 @@ private fun DashboardScreen(
                     ) {
                         BloodDripText(
                             text = "The Future is Here",
-                            fontSize = 24.sp,
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            fontSize = 25.sp,
+                            modifier = Modifier.fillMaxWidth().height(55.dp),
                             dripPoints = listOf(
                                 0.19f to 0.88f,
                                 0.37f to 0.72f,
@@ -768,8 +768,8 @@ private fun DashboardScreen(
 
                         BloodDripText(
                             text = "AI created by Someone who would like to stay Anonymous",
-                            fontSize = 10.sp,
-                            modifier = Modifier.fillMaxWidth().height(35.dp),
+                            fontSize = 12.sp,
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
                             dripPoints = listOf(
                                 0.16f to 0.84f,
                                 0.43f to 0.72f,
@@ -823,19 +823,19 @@ private fun BloodDripText(
         Canvas(modifier = Modifier.fillMaxSize()) {
             dripPoints.forEachIndexed { index, point ->
                 val x = size.width * point.first
-                val startY = size.height * 0.62f
+                val startY = size.height * 0.68f
                 val endY = size.height * point.second
 
                 drawLine(
                     color = blood,
                     start = Offset(x, startY),
                     end = Offset(x, endY),
-                    strokeWidth = if (index % 2 == 0) 3.2f else 2.4f
+                    strokeWidth = if (index % 2 == 0) 2.2f else 1.6f
                 )
 
                 drawCircle(
                     color = blood,
-                    radius = if (index % 2 == 0) 3f else 2.2f,
+                    radius = if (index % 2 == 0) 2.2f else 1.6f,
                     center = Offset(x, endY)
                 )
 
