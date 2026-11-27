@@ -754,13 +754,13 @@ private fun DashboardScreen(
                     ) {
                         BloodDripText(
                             text = "The Future is Here",
-                            fontSize = 25.sp,
-                            modifier = Modifier.fillMaxWidth().height(55.dp),
+                            fontSize = 26.sp,
+                            modifier = Modifier.fillMaxWidth().height(58.dp),
                             dripPoints = listOf(
-                                0.19f to 0.88f,
-                                0.37f to 0.72f,
-                                0.57f to 0.96f,
-                                0.78f to 0.80f
+                                0.39f to 0.88f,
+                                0.45f to 0.78f,
+                                0.53f to 0.94f,
+                                0.60f to 0.84f
                             )
                         )
 
@@ -768,13 +768,13 @@ private fun DashboardScreen(
 
                         BloodDripText(
                             text = "AI created by Someone who would like to stay Anonymous",
-                            fontSize = 12.sp,
-                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                            fontSize = 13.sp,
+                            modifier = Modifier.fillMaxWidth().height(45.dp),
                             dripPoints = listOf(
-                                0.16f to 0.84f,
-                                0.43f to 0.72f,
-                                0.69f to 0.94f,
-                                0.87f to 0.78f
+                                0.20f to 0.84f,
+                                0.39f to 0.76f,
+                                0.63f to 0.92f,
+                                0.80f to 0.82f
                             )
                         )
                     }
@@ -795,7 +795,7 @@ private fun BloodDripText(
     modifier: Modifier = Modifier,
     dripPoints: List<Pair<Float, Float>>
 ) {
-    val blood = Color(0xFF8B0000)
+    val blood = Color(0xFFB5122A)
     val highlight = Color(0xFFFF263F)
 
     Box(
@@ -806,14 +806,14 @@ private fun BloodDripText(
             text = text,
             color = blood,
             fontSize = fontSize,
-            fontFamily = FontFamily.Cursive,
+            fontFamily = FontFamily.Serif,
             fontStyle = FontStyle.Italic,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
             lineHeight = fontSize * 1.25f,
             style = TextStyle(
                 shadow = Shadow(
-                    color = Color(0xFF65000B),
+                    color = Color(0xFF9E1025),
                     offset = Offset(0f, 1.5f),
                     blurRadius = 7f
                 )
