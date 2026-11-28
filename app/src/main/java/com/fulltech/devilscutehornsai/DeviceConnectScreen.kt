@@ -5,6 +5,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -106,6 +108,7 @@ fun DeviceConnectScreen(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF090909))
+            .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
         TextButton(onClick = onBack) {
