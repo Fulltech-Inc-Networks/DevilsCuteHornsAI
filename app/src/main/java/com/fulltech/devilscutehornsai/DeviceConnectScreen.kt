@@ -87,6 +87,25 @@ fun DeviceConnectScreen(onBack: () -> Unit) {
         onDispose { executor.shutdownNow() }
     }
 
+    LaunchedEffect(serviceConfigured, credentials != null) {
+        if (serviceConfigured && credentials != null) {
+            executor.execute {
+                runCatching {
+                    val result = DeviceConnectPairingClient(
+                        context.applicationContext,
+                        DeviceConnectServiceConfig.BASE_URL
+                    ).listActivePairings()
+                    val array = result.getJSONArray("pairings")
+                    val devices = (0 until array.length()).map { index ->
+                        val item = array.getJSONObject(index)
+                        "${item.optString("deviceName")} (${item.optString("deviceId")})"
+                    }
+                    mainHandler.post { pairedDevices = devices }
+                }
+            }
+        }
+    }
+
     fun runPairing(task: () -> Unit) {
         busy = true
         message = "Working..."

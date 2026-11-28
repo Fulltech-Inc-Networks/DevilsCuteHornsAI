@@ -366,8 +366,10 @@ internal class DeviceConnectReceiveWorker(
                         receivedAt = System.currentTimeMillis()
                     )
 
-                    // ACK only after the local repository confirms the save.
                     repository.save(received)
+                    val session = SessionRepository(applicationContext)
+                        .saveReceivedAnswer(received)
+                    DeviceConnectReceiveEvents.enqueue(applicationContext, session.id)
                     client.acknowledge(transferId)
                 } catch (error: IOException) {
                     // Leave unacknowledged. A later run can fetch it again.

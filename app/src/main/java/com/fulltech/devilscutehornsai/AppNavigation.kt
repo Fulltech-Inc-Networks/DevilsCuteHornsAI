@@ -91,6 +91,44 @@ fun DchApp() {
         goBack()
     }
 
+    LaunchedEffect(route) {
+        while (true) {
+            val pendingId = DeviceConnectReceiveEvents.peekNext(
+                context.applicationContext
+            )
+
+            if (pendingId != null) {
+                val safeToOpen = route in setOf(
+                    "home", "history", "settings", "device_connect"
+                )
+
+                if (safeToOpen) {
+                    val receivedSession = withContext(Dispatchers.IO) {
+                        repository.getSession(pendingId)
+                    }
+
+                    if (receivedSession != null) {
+                        DeviceConnectReceiveEvents.takeNext(context.applicationContext)
+                        resetToHistoryDetail(receivedSession.id)
+                    }
+                } else if (
+                    DeviceConnectReceiveEvents.markNotified(
+                        context.applicationContext,
+                        pendingId
+                    )
+                ) {
+                    Toast.makeText(
+                        context,
+                        "New answer received. It will open when you leave this screen.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            delay(1000)
+        }
+    }
+
     LaunchedEffect(route, activeSessionId) {
         if (
             (route == "camera" || route == "review" || route == "detail") &&
@@ -2141,7 +2179,11 @@ private fun SessionHistoryScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
 
                                     Text(
-                                        "${session.pageCount} page(s)",
+                                        if (session.sourceTransferId.isNotBlank()) {
+                                            "Received answer • ${session.senderDeviceName}"
+                                        } else {
+                                            "${session.pageCount} page(s)"
+                                        },
                                         color = Color.White
                                     )
 
@@ -2312,7 +2354,11 @@ private fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        "${currentSession.pageCount} scanned page(s)",
+                        if (currentSession.sourceTransferId.isNotBlank()) {
+                            "RECEIVED FROM ${currentSession.senderDeviceName}"
+                        } else {
+                            "${currentSession.pageCount} scanned page(s)"
+                        },
                         color = AppMuted
                     )
 

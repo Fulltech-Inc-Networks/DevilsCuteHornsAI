@@ -31,7 +31,10 @@ data class ScanSession(
     val updatedAt: Long = 0L,
     val answerStatus: String = "",
     val answerAttemptAt: Long = 0L,
-    val questionTextForSpeech: String = ""
+    val questionTextForSpeech: String = "",
+    val sourceTransferId: String = "",
+    val senderDeviceName: String = "",
+    val receivedAt: Long = 0L
 ) {
     val pageCount: Int
         get() = pagePaths.size
@@ -107,6 +110,54 @@ class SessionRepository(context: Context) {
         } catch (error: Exception) {
             folder.deleteRecursively()
             throw error
+        }
+    }
+
+    @Synchronized
+    fun saveReceivedAnswer(received: ReceivedAnswer): ScanSession {
+        require(received.transferId.matches(Regex("[a-fA-F0-9-]{36}")))
+        require(received.questionText.isNotBlank() && received.answerText.isNotBlank())
+
+        val existing = getSessions().firstOrNull {
+            it.sourceTransferId == received.transferId
+        }
+        if (existing != null) {
+            require(existing.answerText == received.answerText &&
+                existing.questionTextForSpeech == received.questionText) {
+                "Transfer ID already exists with different content."
+            }
+            return existing
+        }
+
+        val now = System.currentTimeMillis()
+        val id = UUID.randomUUID().toString()
+        val folder = File(root, id)
+        check(folder.mkdirs()) { "Unable to create received-answer session." }
+
+        val session = ScanSession(
+            id = id,
+            createdAt = received.completedAt,
+            pagePaths = emptyList(),
+            extractedText = received.questionText,
+            reconstructedText = received.questionText,
+            approvedText = received.questionText,
+            answerText = received.answerText,
+            model = received.model,
+            status = "answered",
+            updatedAt = now,
+            answerStatus = "completed",
+            answerAttemptAt = received.completedAt,
+            questionTextForSpeech = received.questionText,
+            sourceTransferId = received.transferId,
+            senderDeviceName = received.senderDeviceName,
+            receivedAt = received.receivedAt
+        )
+        try {
+            writeSession(session)
+            return session
+        } catch (e: Exception) {
+            folder.deleteRecursively()
+            throw e
         }
     }
 
@@ -463,6 +514,9 @@ class SessionRepository(context: Context) {
             put("answerStatus", session.answerStatus)
             put("answerAttemptAt", session.answerAttemptAt)
             put("questionTextForSpeech", session.questionTextForSpeech)
+            put("sourceTransferId", session.sourceTransferId)
+            put("senderDeviceName", session.senderDeviceName)
+            put("receivedAt", session.receivedAt)
             put("pagePaths", JSONArray(session.pagePaths))
             put("pageResults", JSONArray().apply {
                 session.pageResults.forEach { page ->
@@ -481,6 +535,7 @@ class SessionRepository(context: Context) {
         }
 
         val folder = File(root, session.id)
+        check(folder.exists() || folder.mkdirs()) { "Unable to create session folder." }
         val temporary = File(folder, "session.tmp")
         val destination = File(folder, "session.json")
 
@@ -535,7 +590,10 @@ class SessionRepository(context: Context) {
             ),
             answerStatus = json.optString("answerStatus", ""),
             answerAttemptAt = json.optLong("answerAttemptAt", 0L),
-            questionTextForSpeech = json.optString("questionTextForSpeech", "")
+            questionTextForSpeech = json.optString("questionTextForSpeech", ""),
+            sourceTransferId = json.optString("sourceTransferId", ""),
+            senderDeviceName = json.optString("senderDeviceName", ""),
+            receivedAt = json.optLong("receivedAt", 0L)
         )
     }
 }
